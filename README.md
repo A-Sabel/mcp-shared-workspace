@@ -1,44 +1,63 @@
-# MCP File Server
+# MCP Shared Workspace Server
 
-A sandboxed MCP file server (Python + FastMCP, Streamable HTTP) that gives agents
-a shared, persistent workspace through 10 small tools, two permission roles
-(reader / writer), and handoff files for multi-session work.
+A sandboxed Python MCP server exposes a persistent shared
+workspace over Streamable HTTP. It provides 10 tools, reader/writer roles,
+append-only handoff files, audit logging, and Git operations.
 
-**Status:** M1-M2 in progress. `sandbox.py` and its tests are done; tools are next.
+## Capabilities
+
+Reader tokens expose `list_files`, `read_file`, `search_files`, `append_state`,
+`git_status`, and `git_diff`. Writer tokens additionally expose `write_file`,
+`str_replace`, `delete_file`, and `git_commit`.
+
+Every filesystem path passes through the sandbox. Protected names, traversal,
+symlink escapes, oversized reads/writes, and unsafe Git arguments are rejected.
+The known hard-link and TOCTOU limitations are recorded in [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Setup
 
 Requires Python 3.10+.
 
-```bash
+```powershell
 python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-cp .env.example .env             # then set real tokens and WORKSPACE_ROOT
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements-lock.txt
+Copy-Item .env.example .env
 ```
 
-Create the live workspace **outside** this repo and seed it:
+Set `WORKSPACE_ROOT` to a separate directory containing the shared handoff
+files, generate distinct random `READER_TOKEN` and `WRITER_TOKEN` values, and
+set `PUBLIC_HOSTNAME` to the ngrok hostname without `https://`.
 
-```bash
-mkdir ~/mcp-workspace
-cp -r examples/workspace/. ~/mcp-workspace/
-cd ~/mcp-workspace && git init && git add -A && git commit -m "chore: seed workspace"
+To seed a workspace:
+
+```powershell
+New-Item -ItemType Directory ..\mcp-workspace -Force
+Copy-Item examples\workspace\* ..\mcp-workspace -Recurse -Force
+Set-Location ..\mcp-workspace
+git init
+git add -A
+git commit -m "chore: seed workspace"
 ```
 
-## Tests
+## Run And Test
 
-```bash
+```powershell
+python -m server.http_runner
 python -m pytest
 ```
 
-## Layout
+For PM2 and ngrok, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). The repeatable
+acceptance flow is in [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
+
+## Project Map
 
 ```text
-server/        config.py, sandbox.py, tools/ (more modules added per milestone)
-examples/      seed copy of the handoff files
-tests/         pytest suites
-docs/          report, transcript, demo script (added at M5)
-logs/          tool_calls.jsonl (git-ignored)
+server/             MCP server, sandbox, tools, auth, audit, HTTP entry point
+examples/workspace/ Seed handoff files
+tests/              unit, security, HTTP, and MCP integration tests
+docs/               architecture, security, deployment, evidence, demo
+logs/               local audit output; ignored by Git
 ```
 
-Run the server with `python -m server.main` (not `python server/main.py`).
+The stdio development entry point is `python -m server.main --role reader`.

@@ -229,6 +229,8 @@ __marimo__/
 
 # MCP workspace data
 workspace/
+!examples/workspace/
+!examples/workspace/**
 
 # Deleted-file staging area
 .trash/

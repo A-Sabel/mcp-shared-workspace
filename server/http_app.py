@@ -12,11 +12,6 @@ from server.security.http_auth import AuthenticationMiddleware
 from server.security.token_verifier import WorkspaceTokenVerifier
 
 
-# Public hostname currently assigned by ngrok.
-# If the ngrok URL changes, update this value.
-NGROK_HOST = "virtuous-promptly-petition.ngrok-free.dev"
-
-
 def build_http_app(settings: Settings) -> ASGIApp:
     """
     Build the authenticated Streamable HTTP application.
@@ -40,16 +35,18 @@ def build_http_app(settings: Settings) -> ASGIApp:
     # We keep an explicit allowlist instead of disabling
     # DNS-rebinding protection.
 
+    public_hostname = settings.public_hostname
+
     transport_security = TransportSecuritySettings(
         allowed_hosts=[
             "testserver",
             "testserver:*",
-            NGROK_HOST,
-            f"{NGROK_HOST}:*",
+            public_hostname,
+            f"{public_hostname}:*",
         ],
         allowed_origins=[
             "http://testserver",
-            f"https://{NGROK_HOST}",
+            f"https://{public_hostname}",
         ],
     )
 
@@ -70,7 +67,7 @@ def build_http_app(settings: Settings) -> ASGIApp:
     verifier = WorkspaceTokenVerifier(
         reader_token=settings.reader_token,
         writer_token=settings.writer_token,
-        resource=f"https://{NGROK_HOST}/mcp",
+        resource=f"https://{public_hostname}/mcp",
     )
 
     # Authentication + role routing

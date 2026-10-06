@@ -14,12 +14,12 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # Limits that keep tool results small (token efficiency).
-MAX_READ_LINES = 200          # per range in read_file
-MAX_READ_RANGES = 5           # ranges per read_file call
-LIST_LIMIT = 200              # entries per list_files call
-SEARCH_LIMIT = 50             # matches per search_files call
-SNIPPET_CHARS = 120           # trimmed match line in search_files
-MAX_WRITE_BYTES = 1_000_000   # write_file / append_state size cap
+MAX_READ_LINES = 200  # per range in read_file
+MAX_READ_RANGES = 5  # ranges per read_file call
+LIST_LIMIT = 200  # entries per list_files call
+SEARCH_LIMIT = 50  # matches per search_files call
+SNIPPET_CHARS = 120  # trimmed match line in search_files
+MAX_WRITE_BYTES = 1_000_000  # write_file / append_state size cap
 MAX_GIT_OUTPUT_CHARS = 20_000  # git_diff / git_status cap
 
 MIN_TOKEN_LEN = 16
@@ -35,6 +35,7 @@ class Settings:
     reader_token: str
     writer_token: str
     log_path: Path
+    public_hostname: str = "localhost"
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
@@ -56,12 +57,26 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         if not token:
             raise ConfigError(f"{name} is not set.")
         if len(token) < MIN_TOKEN_LEN or token.lower().startswith("change-me"):
-            raise ConfigError(f"{name} is a placeholder or too short (min {MIN_TOKEN_LEN} chars).")
+            raise ConfigError(
+                f"{name} is a placeholder or too short (min {MIN_TOKEN_LEN} chars)."
+            )
     if reader == writer:
         raise ConfigError("READER_TOKEN and WRITER_TOKEN must differ.")
+
+    public_hostname = env.get("PUBLIC_HOSTNAME", "localhost").strip()
+    if not public_hostname or "://" in public_hostname or "/" in public_hostname:
+        raise ConfigError(
+            "PUBLIC_HOSTNAME must be a non-empty hostname without a scheme or path."
+        )
 
     log_path = Path(env.get("LOG_PATH", "logs/tool_calls.jsonl")).expanduser()
     if not log_path.is_absolute():
         log_path = PROJECT_ROOT / log_path
 
-    return Settings(root, reader, writer, log_path.resolve())
+    return Settings(
+        root,
+        reader,
+        writer,
+        log_path.resolve(),
+        public_hostname,
+    )
