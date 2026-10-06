@@ -11,6 +11,8 @@ from typing import Annotated
 from mcp.server.mcpserver import MCPServer
 from pydantic import BaseModel, ConfigDict, Field
 
+from server.audit_summaries import path_summary, read_summary
+from server.audited_tool import audited
 from server.config import LIST_LIMIT, MAX_READ_LINES, MAX_READ_RANGES
 from server.roles import is_allowed
 from server.sandbox import Sandbox, SandboxError
@@ -27,16 +29,24 @@ class ReadRange(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     path: str = Field(description="Workspace-relative file path.")
-    start: int = Field(ge=1, description="First line number (one-based).")
-    end: int = Field(ge=1, description="Last line number (inclusive).")
+    start: int = Field(
+        ge=1,
+        description="First line number (one-based).",
+    )
+    end: int = Field(
+        ge=1,
+        description="Last line number (inclusive).",
+    )
 
 
 def _fmt_size(size: int) -> str:
     """Format a byte count compactly."""
     if size < 1024:
         return f"{size} B"
+
     if size < 1024**2:
         return f"{size / 1024:.1f} KB"
+
     return f"{size / 1024**2:.1f} MB"
 
 
@@ -81,7 +91,10 @@ def _glob_match(relative_path: str, pattern: str) -> bool:
     filename = relative_path.rsplit("/", 1)[-1]
 
     return any(
-        fnmatch.fnmatch(relative_path if "/" in pat else filename, pat)
+        fnmatch.fnmatch(
+            relative_path if "/" in pat else filename,
+            pat,
+        )
         for pat in patterns
     )
 
@@ -154,11 +167,13 @@ def list_files_impl(
 
     if base.is_file():
         size = base.stat().st_size
+
         parts = (
             sandbox.relative(base),
             _fmt_size(size),
             _line_info(base, size),
         )
+
         return "  ".join(part for part in parts if part)
 
     found: list[tuple[Path, bool]] = []
@@ -253,69 +268,85 @@ def register(
     mcp: MCPServer,
     sandbox: Sandbox,
     role: str,
+    log_path: Path | None = None,
 ) -> None:
-    """Register list_files when the supplied role is authorized."""
+    """Register filesystem tools when the supplied role is authorized."""
 
-    if not is_allowed("list_files", role):
-        return
+    if log_path is None:
+        log_path = sandbox.root / ".tool_calls.jsonl"
 
-    def list_files(
-        path: Annotated[
-            str,
-            Field(
-                description=(
-                    "Workspace-relative directory or file path. "
-                    "Use '.' for the workspace root."
+    if is_allowed("list_files", role):
+
+        @audited(
+            tool_name="list_files",
+            role=role,
+            log_path=log_path,
+            summarize=path_summary,
+        )
+        def list_files(
+            path: Annotated[
+                str,
+                Field(
+                    description=(
+                        "Workspace-relative directory or file path. "
+                        "Use '.' for the workspace root."
+                    ),
                 ),
-            ),
-        ] = ".",
-        glob: Annotated[
-            str | None,
-            Field(
-                max_length=200,
-                description=(
-                    "Optional filename or relative-path glob, "
-                    "for example '*.py'."
+            ] = ".",
+            glob: Annotated[
+                str | None,
+                Field(
+                    max_length=200,
+                    description=(
+                        "Optional filename or relative-path glob, "
+                        "for example '*.py'."
+                    ),
                 ),
-            ),
-        ] = None,
-        max_depth: Annotated[
-            int,
-            Field(
-                ge=1,
-                le=MAX_DEPTH,
-                description="Maximum directory depth to descend.",
-            ),
-        ] = 1,
-        limit: Annotated[
-            int,
-            Field(
-                ge=1,
-                le=LIST_LIMIT,
-                description="Maximum number of entries to return.",
-            ),
-        ] = LIST_LIMIT,
-    ) -> str:
-        """List files and folders in the sandboxed workspace."""
-        try:
-            return list_files_impl(
-                sandbox,
-                path,
-                glob,
-                max_depth,
-                limit,
-            )
-        except (SandboxError, OSError) as exc:
-            raise ValueError(str(exc)) from None
+            ] = None,
+            max_depth: Annotated[
+                int,
+                Field(
+                    ge=1,
+                    le=MAX_DEPTH,
+                    description="Maximum directory depth to descend.",
+                ),
+            ] = 1,
+            limit: Annotated[
+                int,
+                Field(
+                    ge=1,
+                    le=LIST_LIMIT,
+                    description="Maximum number of entries to return.",
+                ),
+            ] = LIST_LIMIT,
+        ) -> str:
+            """List files and folders in the sandboxed workspace."""
+            try:
+                return list_files_impl(
+                    sandbox,
+                    path,
+                    glob,
+                    max_depth,
+                    limit,
+                )
+            except (SandboxError, OSError) as exc:
+                raise ValueError(str(exc)) from None
 
-    mcp.add_tool(
-        list_files,
-        name="list_files",
-        description=LIST_FILES_DESCRIPTION,
-        structured_output=False,
-    )
+        mcp.add_tool(
+            list_files,
+            name="list_files",
+            description=LIST_FILES_DESCRIPTION,
+            structured_output=False,
+        )
 
     if is_allowed("read_file", role):
+
+        @audited(
+            tool_name="read_file",
+            role=role,
+            log_path=log_path,
+            summarize=read_summary,
+        )
         def read_file(
             ranges: Annotated[
                 list[ReadRange],
@@ -323,8 +354,8 @@ def register(
                     min_length=1,
                     max_length=MAX_READ_RANGES,
                     description=(
-                        "One to five ranges; each has a workspace-relative path "
-                        "and inclusive one-based start/end line numbers."
+                        "One to five ranges; each has a workspace-relative "
+                        "path and inclusive one-based start/end line numbers."
                     ),
                 ),
             ],
@@ -342,18 +373,25 @@ def register(
             structured_output=False,
         )
 
+
 def read_file_impl(
-    sandbox: Sandbox, ranges: Sequence[ReadRange | dict[str, object]]
+    sandbox: Sandbox,
+    ranges: Sequence[ReadRange | dict[str, object]],
 ) -> str:
     """Read bounded, possibly non-contiguous line ranges via the sandbox."""
     if not isinstance(ranges, list):
         raise ValueError("ranges must be a list.")
+
     if not ranges:
         raise ValueError("At least one range is required.")
+
     if len(ranges) > MAX_READ_RANGES:
-        raise ValueError(f"At most {MAX_READ_RANGES} ranges are allowed.")
+        raise ValueError(
+            f"At most {MAX_READ_RANGES} ranges are allowed."
+        )
 
     sections: list[str] = []
+
     for index, item in enumerate(ranges, start=1):
         try:
             spec = (
@@ -362,44 +400,68 @@ def read_file_impl(
                 else ReadRange.model_validate(item)
             )
         except Exception as exc:
-            raise ValueError(f"Invalid range {index}: {exc}") from None
+            raise ValueError(
+                f"Invalid range {index}: {exc}"
+            ) from None
 
         if spec.end < spec.start:
             raise ValueError(
                 f"Range {index}: end must be greater than or equal to start."
             )
+
         if spec.end - spec.start + 1 > MAX_READ_LINES:
             raise ValueError(
                 f"Range {index}: at most {MAX_READ_LINES} lines are allowed."
             )
 
         path = sandbox.resolve(spec.path)
+
         if not path.exists():
-            raise ValueError(f"Range {index}: file {spec.path!r} does not exist.")
+            raise ValueError(
+                f"Range {index}: file {spec.path!r} does not exist."
+            )
+
         if not path.is_file():
-            raise ValueError(f"Range {index}: path {spec.path!r} is not a file.")
+            raise ValueError(
+                f"Range {index}: path {spec.path!r} is not a file."
+            )
 
         try:
             with path.open("r", encoding="utf-8") as stream:
                 selected: list[str] = []
+
                 for line_number, line in enumerate(stream, start=1):
                     if line_number > spec.end:
                         break
+
                     if line_number >= spec.start:
                         selected.append(
-                            f"{line_number}: {line.rstrip(chr(10)).rstrip(chr(13))}"
+                            f"{line_number}: "
+                            f"{line.rstrip(chr(10)).rstrip(chr(13))}"
                         )
+
         except UnicodeDecodeError:
             raise ValueError(
-                f"Range {index}: file {spec.path!r} is not valid UTF-8 text."
-            ) from None
-        except OSError as exc:
-            detail = exc.strerror or "I/O error"
-            raise ValueError(
-                f"Range {index}: cannot read file {spec.path!r}: {detail}."
+                f"Range {index}: file {spec.path!r} "
+                "is not valid UTF-8 text."
             ) from None
 
-        content = "\n".join(selected) if selected else "(no lines in requested range)"
-        sections.append(f"{spec.path}:{spec.start}-{spec.end}\n{content}")
+        except OSError as exc:
+            detail = exc.strerror or "I/O error"
+
+            raise ValueError(
+                f"Range {index}: cannot read file "
+                f"{spec.path!r}: {detail}."
+            ) from None
+
+        content = (
+            "\n".join(selected)
+            if selected
+            else "(no lines in requested range)"
+        )
+
+        sections.append(
+            f"{spec.path}:{spec.start}-{spec.end}\n{content}"
+        )
 
     return "\n\n".join(sections)

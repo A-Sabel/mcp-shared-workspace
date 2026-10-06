@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from server.audit_summaries import git_commit_summary
+from server.audited_tool import audited
+
 import subprocess
 from typing import Annotated
 
@@ -276,8 +281,12 @@ def register(
     mcp: MCPServer,
     sandbox: Sandbox,
     role: str,
+    log_path: Path | None = None,
 ) -> None:
     """Register Git tools allowed for the supplied role."""
+    if log_path is None:
+        log_path = sandbox.root / ".tool_calls.jsonl"
+
     if is_allowed("git_status", role):
 
         def git_status() -> str:
@@ -315,6 +324,12 @@ def register(
         )
 
     if is_allowed("git_commit", role):
+        @audited(
+            tool_name="git_commit",
+            role=role,
+            log_path=log_path,
+            summarize=git_commit_summary,
+        )
 
         def git_commit(
             message: Annotated[

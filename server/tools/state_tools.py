@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from server.audit_summaries import state_summary
+from server.audited_tool import audited
+
 from datetime import datetime, timezone
 from typing import Annotated
 
@@ -98,10 +103,21 @@ def register(
     mcp: MCPServer,
     sandbox: Sandbox,
     role: str,
+    log_path: Path | None = None,
 ) -> None:
     """Register append_state when the supplied role is authorized."""
+    if log_path is None:
+        log_path = sandbox.root / ".tool_calls.jsonl"
+
     if not is_allowed("append_state", role):
         return
+
+    @audited(
+        tool_name="append_state",
+        role=role,
+        log_path=log_path,
+        summarize=state_summary,
+    )
 
     def append_state(
         file: Annotated[

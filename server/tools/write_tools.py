@@ -2,13 +2,21 @@
 
 from pathlib import Path
 
+from server.audit_summaries import (
+    path_summary,
+    replace_summary,
+    write_summary,
+)
+from server.audited_tool import audited
+
 from mcp.server.mcpserver import MCPServer
 from pydantic import Field
+
+import shutil
 
 from server.config import MAX_WRITE_BYTES
 from server.roles import WRITER
 from server.sandbox import Sandbox, SandboxError
-
 
 MAX_REPLACE_TEXT_CHARS = 50_000
 MAX_REPLACEMENTS = 100
@@ -22,9 +30,7 @@ def _validate_text(value: str, name: str, max_chars: int) -> str:
         raise ValueError(f"{name} must not be empty.")
 
     if len(value) > max_chars:
-        raise ValueError(
-            f"{name} exceeds the {max_chars:,}-character limit."
-        )
+        raise ValueError(f"{name} exceeds the {max_chars:,}-character limit.")
 
     return value
 
@@ -39,9 +45,7 @@ def write_file_impl(
         raise ValueError("content must be a string.")
 
     if len(content.encode("utf-8")) > MAX_WRITE_BYTES:
-        raise ValueError(
-            f"content exceeds the {MAX_WRITE_BYTES:,}-byte limit."
-        )
+        raise ValueError(f"content exceeds the {MAX_WRITE_BYTES:,}-byte limit.")
 
     target = sandbox.resolve(path, for_write=True)
 
@@ -71,9 +75,7 @@ def str_replace_impl(
         raise ValueError("new must be a string.")
 
     if len(new) > MAX_REPLACE_TEXT_CHARS:
-        raise ValueError(
-            f"new exceeds the {MAX_REPLACE_TEXT_CHARS:,}-character limit."
-        )
+        raise ValueError(f"new exceeds the {MAX_REPLACE_TEXT_CHARS:,}-character limit.")
 
     target = sandbox.resolve(path, for_write=True)
 
@@ -86,16 +88,12 @@ def str_replace_impl(
     try:
         text = target.read_text(encoding="utf-8")
     except UnicodeDecodeError as exc:
-        raise ValueError(
-            f"File is not valid UTF-8 text: {path}"
-        ) from exc
+        raise ValueError(f"File is not valid UTF-8 text: {path}") from exc
 
     occurrences = text.count(old)
 
     if occurrences == 0:
-        raise ValueError(
-            f"Text to replace was not found in {path}."
-        )
+        raise ValueError(f"Text to replace was not found in {path}.")
 
     if not replace_all and occurrences > 1:
         raise ValueError(
@@ -111,23 +109,18 @@ def str_replace_impl(
     )
 
     if len(updated.encode("utf-8")) > MAX_WRITE_BYTES:
-        raise ValueError(
-            f"Updated file exceeds the {MAX_WRITE_BYTES:,}-byte limit."
-        )
+        raise ValueError(f"Updated file exceeds the {MAX_WRITE_BYTES:,}-byte limit.")
 
     target.write_text(updated, encoding="utf-8")
 
-    return (
-        f"Replaced {replacements} occurrence(s) in "
-        f"{sandbox.relative(target)}."
-    )
+    return f"Replaced {replacements} occurrence(s) in " f"{sandbox.relative(target)}."
 
 
 def delete_file_impl(
     sandbox: Sandbox,
     path: str,
 ) -> str:
-    """Delete one regular file inside the sandbox."""
+    """Move one regular file into the sandbox trash directory."""
     target = sandbox.resolve(path, for_write=True)
 
     if not target.exists():
@@ -138,12 +131,41 @@ def delete_file_impl(
             f"delete_file only accepts regular files: {path}"
         )
 
-    relative = sandbox.relative(target)
+    relative = target.relative_to(sandbox.root)
+    trash_root = sandbox.root / ".trash"
+    trash_target = trash_root / relative
 
-    target.unlink()
+    trash_target.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
-    return f"Deleted {relative}."
+    if trash_target.exists():
+        stem = trash_target.stem
+        suffix = trash_target.suffix
+        counter = 1
 
+        while True:
+            candidate = (
+                trash_target.parent
+                / f"{stem}~{counter}{suffix}"
+            )
+
+            if not candidate.exists():
+                trash_target = candidate
+                break
+
+            counter += 1
+
+    shutil.move(
+        str(target),
+        str(trash_target),
+    )
+
+    return (
+        f"Moved {sandbox.relative(target)} to trash as "
+        f"{sandbox.relative(trash_target)}."
+    )
 
 WRITE_FILE_DESCRIPTION = """
 Create or overwrite one UTF-8 text file inside the workspace.
@@ -174,20 +196,27 @@ Directories cannot be deleted through this tool.
 """.strip()
 
 
-def register(mcp: MCPServer, sandbox: Sandbox, role: str) -> None:
+def register(mcp: MCPServer, sandbox: Sandbox, role: str, log_path: Path | None = None) -> None:
     """Register write tools for writer-capable roles."""
     if role != WRITER:
         return
+
+    if log_path is None:
+        log_path = sandbox.root / ".tool_calls.jsonl"
 
     @mcp.tool(
         name="write_file",
         description=WRITE_FILE_DESCRIPTION,
     )
+    @audited(
+        tool_name="write_file",
+        role=role,
+        log_path=log_path,
+        summarize=write_summary,
+    )
     def write_file(
         path: str = Field(description="Workspace-relative file path."),
-        content: str = Field(
-            description="Complete UTF-8 text content to write."
-        ),
+        content: str = Field(description="Complete UTF-8 text content to write."),
     ) -> str:
         return write_file_impl(sandbox, path, content)
 
@@ -195,19 +224,19 @@ def register(mcp: MCPServer, sandbox: Sandbox, role: str) -> None:
         name="str_replace",
         description=STR_REPLACE_DESCRIPTION,
     )
+    @audited(
+        tool_name="str_replace",
+        role=role,
+        log_path=log_path,
+        summarize=replace_summary,
+    )
     def str_replace(
         path: str = Field(description="Workspace-relative file path."),
-        old: str = Field(
-            description="Exact text that must be replaced."
-        ),
-        new: str = Field(
-            description="Replacement text. May be empty when deletion is intended."
-        ),
+        old: str = Field(description="Exact text that must be replaced."),
+        new: str = Field(description="Replacement text."),
         replace_all: bool = Field(
             default=False,
-            description=(
-                "Replace every occurrence. Keep false for precise edits."
-            ),
+            description="Replace every occurrence.",
         ),
     ) -> str:
         return str_replace_impl(
@@ -221,6 +250,12 @@ def register(mcp: MCPServer, sandbox: Sandbox, role: str) -> None:
     @mcp.tool(
         name="delete_file",
         description=DELETE_FILE_DESCRIPTION,
+    )
+    @audited(
+        tool_name="delete_file",
+        role=role,
+        log_path=log_path,
+        summarize=path_summary,
     )
     def delete_file(
         path: str = Field(description="Workspace-relative file path."),

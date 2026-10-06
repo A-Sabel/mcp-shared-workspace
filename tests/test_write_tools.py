@@ -274,7 +274,7 @@ def test_str_replace_rejects_protected_file(workspace):
 # ---------------------------------------------------------------------------
 
 
-def test_delete_file_removes_file(workspace):
+def test_delete_file_moves_file_to_trash(workspace):
     path = workspace.root / "temporary.txt"
     path.write_text(
         "delete me",
@@ -286,8 +286,86 @@ def test_delete_file_removes_file(workspace):
         "temporary.txt",
     )
 
+    trash_path = (
+        workspace.root
+        / ".trash"
+        / "temporary.txt"
+    )
+
     assert "temporary.txt" in result
     assert not path.exists()
+    assert trash_path.exists()
+    assert trash_path.read_text(
+        encoding="utf-8"
+    ) == "delete me"
+
+
+def test_delete_file_does_not_overwrite_existing_trash_file(
+    workspace,
+):
+    path = workspace.root / "temporary.txt"
+    path.write_text(
+        "new content",
+        encoding="utf-8",
+    )
+
+    trash = workspace.root / ".trash"
+    trash.mkdir()
+
+    existing = trash / "temporary.txt"
+    existing.write_text(
+        "old deleted content",
+        encoding="utf-8",
+    )
+
+    delete_file_impl(
+        workspace,
+        "temporary.txt",
+    )
+
+    new_trash_file = trash / "temporary~1.txt"
+
+    assert existing.read_text(
+        encoding="utf-8"
+    ) == "old deleted content"
+
+    assert new_trash_file.read_text(
+        encoding="utf-8"
+    ) == "new content"
+
+
+def test_delete_file_preserves_nested_path_in_trash(workspace):
+    path = (
+        workspace.root
+        / "src"
+        / "utils"
+        / "helper.py"
+    )
+
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "print('hello')\n",
+        encoding="utf-8",
+    )
+
+    delete_file_impl(
+        workspace,
+        "src/utils/helper.py",
+    )
+
+    trash_path = (
+        workspace.root
+        / ".trash"
+        / "src"
+        / "utils"
+        / "helper.py"
+    )
+
+    assert not path.exists()
+    assert trash_path.exists()
+    assert trash_path.read_text(
+        encoding="utf-8"
+    ) == "print('hello')\n"
 
 
 def test_delete_file_rejects_missing_file(workspace):

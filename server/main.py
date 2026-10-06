@@ -36,11 +36,11 @@ def build_server(role: str, settings: Settings) -> MCPServer:
         instructions=INSTRUCTIONS,
     )
     sandbox = Sandbox(settings.workspace_root)
-    file_tools.register(mcp, sandbox, role)
-    search_tools.register(mcp, sandbox, role)
-    state_tools.register(mcp, sandbox, role)
-    git_tools.register(mcp, sandbox, role)
-    write_tools.register(mcp, sandbox, role)
+    file_tools.register(mcp, sandbox, role, settings.log_path)
+    search_tools.register(mcp, sandbox, role, settings.log_path)
+    state_tools.register(mcp, sandbox, role, settings.log_path)
+    git_tools.register(mcp, sandbox, role, settings.log_path)
+    write_tools.register(mcp, sandbox, role, settings.log_path)
     return mcp
 
 

@@ -9,6 +9,8 @@ from typing import Annotated
 from mcp.server.mcpserver import MCPServer
 from pydantic import Field
 
+from server.audit_summaries import search_summary
+from server.audited_tool import audited
 from server.config import SEARCH_LIMIT, SNIPPET_CHARS
 from server.roles import is_allowed
 from server.sandbox import Sandbox, SandboxError
@@ -45,6 +47,7 @@ def search_files_impl(
 
     if base.is_file():
         candidates = [base]
+
     elif base.is_dir():
         found: list[tuple[Path, bool]] = []
 
@@ -61,6 +64,7 @@ def search_files_impl(
             for item_path, is_dir in found
             if not is_dir
         ]
+
     else:
         raise SandboxError(
             f"Path {path!r} is not a file or directory."
@@ -142,6 +146,7 @@ def search_files_impl(
         except UnicodeDecodeError:
             # Skip binary/non-UTF-8 files.
             continue
+
         except OSError:
             # Skip files that disappear or become unreadable.
             continue
@@ -180,12 +185,22 @@ def register(
     mcp: MCPServer,
     sandbox: Sandbox,
     role: str,
+    log_path: Path | None = None,
 ) -> None:
     """Register search_files when the supplied role is authorized."""
+
+    if log_path is None:
+        log_path = sandbox.root / ".tool_calls.jsonl"
 
     if not is_allowed("search_files", role):
         return
 
+    @audited(
+        tool_name="search_files",
+        role=role,
+        log_path=log_path,
+        summarize=search_summary,
+    )
     def search_files(
         query: Annotated[
             str,
