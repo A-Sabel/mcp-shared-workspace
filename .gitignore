@@ -218,3 +218,24 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# =========================
+# MCP Shared Workspace
+# =========================
+
+# Environment secrets
+.env.*
+!.env.example
+
+# MCP workspace data
+workspace/
+
+# Deleted-file staging area
+.trash/
+
+# Audit logs
+*.jsonl
+logs/
+
+# Local MCP configuration
+.mcp.json

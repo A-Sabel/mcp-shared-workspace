@@ -1,0 +1,47 @@
+import pytest
+
+from server.config import ConfigError, load_settings
+
+GOOD_R = "r" * 20
+GOOD_W = "w" * 20
+
+
+def env(tmp_path, **over):
+    base = {"WORKSPACE_ROOT": str(tmp_path), "READER_TOKEN": GOOD_R, "WRITER_TOKEN": GOOD_W}
+    base.update(over)
+    return base
+
+
+def test_valid_settings(tmp_path):
+    s = load_settings(env(tmp_path))
+    assert s.workspace_root == tmp_path.resolve()
+    assert (s.reader_token, s.writer_token) == (GOOD_R, GOOD_W)
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"WORKSPACE_ROOT": ""},
+        {"WORKSPACE_ROOT": "/definitely/not/here"},
+        {"READER_TOKEN": ""},
+        {"WRITER_TOKEN": "short"},
+        {"READER_TOKEN": "change-me-reader-token"},
+        {"WRITER_TOKEN": GOOD_R},  # same as reader
+    ],
+)
+def test_unsafe_config_rejected(tmp_path, over):
+    with pytest.raises(ConfigError):
+        load_settings(env(tmp_path, **over))
+
+
+def test_relative_log_path_is_anchored_to_project_root(tmp_path):
+    from server.config import PROJECT_ROOT
+
+    s = load_settings(env(tmp_path, LOG_PATH="logs/x.jsonl"))
+    assert s.log_path == (PROJECT_ROOT / "logs" / "x.jsonl").resolve()
+
+
+def test_absolute_log_path_is_kept(tmp_path):
+    target = tmp_path / "audit.jsonl"
+    s = load_settings(env(tmp_path, LOG_PATH=str(target)))
+    assert s.log_path == target.resolve()
