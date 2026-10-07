@@ -64,7 +64,7 @@ def test_invalid_token_is_rejected():
 def test_old_token_is_rejected():
     with pytest.raises(AuthenticationError):
         authenticate_token(
-            "Bearer reader-token-654321",
+            "Bearer old-token",
             mcp_token=MCP_TOKEN,
         )
 

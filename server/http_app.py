@@ -15,7 +15,6 @@ from server.security.token_verifier import WorkspaceTokenVerifier
 def build_http_app(settings: Settings) -> ASGIApp:
     """
     Build the authenticated Streamable HTTP application.
-
         One MCPServer instance exposes the complete authenticated toolbox.
     """
 
@@ -56,7 +55,7 @@ def build_http_app(settings: Settings) -> ASGIApp:
         resource=f"https://{public_hostname}/mcp",
     )
 
-    # Authentication + role routing
+    # Authentication
     authenticated_app = AuthenticationMiddleware(
         app=mcp_app,
         verifier=verifier,

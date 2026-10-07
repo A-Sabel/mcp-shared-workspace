@@ -100,7 +100,7 @@ def test_git_status_and_diff_are_audited_on_failure(tmp_path: Path):
     git_tools.register(
         mcp,
         Sandbox(workspace),
-        "reader",
+        "workspace-client",
         log_path,
     )
 

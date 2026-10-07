@@ -19,7 +19,7 @@ Maintain the reproducible authenticated shared-workspace deployment.
 - Streamable HTTP authentication and transport security implemented
 - JSONL audit logging implemented with safe argument summaries
 - Local test suite verified at 230 passed and 7 symlink tests skipped on Windows
-- Public ngrok and MCP Inspector Reader/Writer workflow verified
+- Public ngrok and MCP Inspector authenticated workflow verified
 - PM2 deployment configuration and M5 documentation completed
 
 ## Next

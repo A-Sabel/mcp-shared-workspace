@@ -8,7 +8,7 @@ MCP_TOKEN = "mcp-token-123456"
 
 def make_test_app():
     async def mcp_app(scope, receive, send):
-        body = b"writer"
+        body = b"mcp"
 
         await send(
             {
@@ -49,7 +49,7 @@ def test_authenticated_token_forwards_to_mcp_app():
     )
 
     assert response.status_code == 200
-    assert response.text == "writer"
+    assert response.text == "mcp"
 
 
 def test_authenticated_health_check_returns_ok():
