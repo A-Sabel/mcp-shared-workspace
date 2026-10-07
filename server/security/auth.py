@@ -1,13 +1,12 @@
 from dataclasses import dataclass
-
-from server.roles import READER, WRITER
+from hmac import compare_digest
 
 
 @dataclass(frozen=True)
 class AuthContext:
-    """Authenticated identity and application role."""
+    """Authenticated MCP client."""
 
-    role: str
+    client_id: str
 
 
 class AuthenticationError(ValueError):
@@ -17,10 +16,9 @@ class AuthenticationError(ValueError):
 def authenticate_token(
     authorization: str | None,
     *,
-    reader_token: str,
-    writer_token: str,
+    mcp_token: str,
 ) -> AuthContext:
-    """Authenticate a Bearer token and resolve its application role."""
+    """Authenticate a Bearer token."""
 
     if not authorization:
         raise AuthenticationError("Missing Authorization header.")
@@ -28,19 +26,14 @@ def authenticate_token(
     scheme, separator, token = authorization.partition(" ")
 
     if not separator or scheme.lower() != "bearer":
-        raise AuthenticationError(
-            "Authorization header must use the Bearer scheme."
-        )
+        raise AuthenticationError("Authorization header must use the Bearer scheme.")
 
     token = token.strip()
 
     if not token:
         raise AuthenticationError("Bearer token is empty.")
 
-    if token == reader_token:
-        return AuthContext(role=READER)
-
-    if token == writer_token:
-        return AuthContext(role=WRITER)
+    if compare_digest(token, mcp_token):
+        return AuthContext(client_id="workspace-client")
 
     raise AuthenticationError("Invalid authentication token.")

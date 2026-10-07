@@ -2,9 +2,10 @@
 
 ## Controls
 
-- Bearer tokens are loaded from environment variables and must be distinct,
-  non-placeholder values of at least 16 characters.
-- Reader and writer requests are routed to separate MCP server instances.
+- One `MCP_TOKEN` is loaded from the environment and must be a non-placeholder
+  value of at least 16 characters.
+- The authenticated client receives the complete MCP toolbox; tool choice is
+  an agent-planning concern, not an authorization mechanism.
 - Every tool resolves paths relative to `WORKSPACE_ROOT` and rejects traversal,
   absolute paths, control characters, protected names, and symlink escapes.
 - `.git`, `.trash`, `.env`, PEM files, and SSH key-like names are protected.

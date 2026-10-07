@@ -15,7 +15,6 @@ from pydantic import Field
 import shutil
 
 from server.config import MAX_WRITE_BYTES
-from server.roles import WRITER
 from server.sandbox import Sandbox, SandboxError
 
 MAX_REPLACE_TEXT_CHARS = 50_000
@@ -127,9 +126,7 @@ def delete_file_impl(
         raise ValueError(f"File does not exist: {path}")
 
     if not target.is_file():
-        raise ValueError(
-            f"delete_file only accepts regular files: {path}"
-        )
+        raise ValueError(f"delete_file only accepts regular files: {path}")
 
     relative = target.relative_to(sandbox.root)
     trash_root = sandbox.root / ".trash"
@@ -146,10 +143,7 @@ def delete_file_impl(
         counter = 1
 
         while True:
-            candidate = (
-                trash_target.parent
-                / f"{stem}~{counter}{suffix}"
-            )
+            candidate = trash_target.parent / f"{stem}~{counter}{suffix}"
 
             if not candidate.exists():
                 trash_target = candidate
@@ -166,6 +160,7 @@ def delete_file_impl(
         f"Moved {sandbox.relative(target)} to trash as "
         f"{sandbox.relative(trash_target)}."
     )
+
 
 WRITE_FILE_DESCRIPTION = """
 Create or overwrite one UTF-8 text file inside the workspace.
@@ -196,11 +191,13 @@ Directories cannot be deleted through this tool.
 """.strip()
 
 
-def register(mcp: MCPServer, sandbox: Sandbox, role: str, log_path: Path | None = None) -> None:
-    """Register write tools for writer-capable roles."""
-    if role != WRITER:
-        return
-
+def register(
+    mcp: MCPServer,
+    sandbox: Sandbox,
+    client_id: str = "workspace-client",
+    log_path: Path | None = None,
+) -> None:
+    """Register the workspace write tools."""
     if log_path is None:
         log_path = sandbox.root / ".tool_calls.jsonl"
 
@@ -210,7 +207,7 @@ def register(mcp: MCPServer, sandbox: Sandbox, role: str, log_path: Path | None 
     )
     @audited(
         tool_name="write_file",
-        role=role,
+        role=client_id,
         log_path=log_path,
         summarize=write_summary,
     )
@@ -226,7 +223,7 @@ def register(mcp: MCPServer, sandbox: Sandbox, role: str, log_path: Path | None 
     )
     @audited(
         tool_name="str_replace",
-        role=role,
+        role=client_id,
         log_path=log_path,
         summarize=replace_summary,
     )
@@ -253,7 +250,7 @@ def register(mcp: MCPServer, sandbox: Sandbox, role: str, log_path: Path | None 
     )
     @audited(
         tool_name="delete_file",
-        role=role,
+        role=client_id,
         log_path=log_path,
         summarize=path_summary,
     )

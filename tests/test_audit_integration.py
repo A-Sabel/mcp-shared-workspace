@@ -30,7 +30,7 @@ def test_audit_success_record(tmp_path: Path):
     audit_tool_call(
         log_path,
         tool="write_file",
-        role="writer",
+        client="workspace-client",
         success=True,
         arguments=arguments,
     )
@@ -42,7 +42,7 @@ def test_audit_success_record(tmp_path: Path):
     record = records[0]
 
     assert record["tool"] == "write_file"
-    assert record["role"] == "writer"
+    assert record["client"] == "workspace-client"
     assert record["success"] is True
 
     # File contents must never be logged.
@@ -61,7 +61,7 @@ def test_audit_failure_record(tmp_path: Path):
     audit_tool_call(
         log_path,
         tool="delete_file",
-        role="writer",
+        client="workspace-client",
         success=False,
         arguments={"path": "important.txt"},
         error="Protected path cannot be deleted.",
@@ -74,7 +74,7 @@ def test_audit_failure_record(tmp_path: Path):
     record = records[0]
 
     assert record["tool"] == "delete_file"
-    assert record["role"] == "writer"
+    assert record["client"] == "workspace-client"
     assert record["success"] is False
     assert record["error"] == "Protected path cannot be deleted."
 
@@ -86,7 +86,7 @@ def test_audit_multiple_records_are_valid_jsonl(tmp_path: Path):
         audit_tool_call(
             log_path,
             tool=tool,
-            role="reader",
+            client="workspace-client",
             success=True,
             arguments={"example": "value"},
         )
@@ -191,7 +191,7 @@ def test_audit_truncates_large_string_values(tmp_path: Path):
     audit_tool_call(
         log_path,
         tool="example",
-        role="reader",
+        client="workspace-client",
         success=True,
         arguments={"value": "A" * 1000},
     )

@@ -32,8 +32,7 @@ class ConfigError(RuntimeError):
 @dataclass(frozen=True)
 class Settings:
     workspace_root: Path
-    reader_token: str
-    writer_token: str
+    mcp_token: str
     log_path: Path
     public_hostname: str = "localhost"
 
@@ -51,17 +50,13 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     if not root.is_dir():
         raise ConfigError("WORKSPACE_ROOT does not exist or is not a directory.")
 
-    reader = env.get("READER_TOKEN", "").strip()
-    writer = env.get("WRITER_TOKEN", "").strip()
-    for name, token in (("READER_TOKEN", reader), ("WRITER_TOKEN", writer)):
-        if not token:
-            raise ConfigError(f"{name} is not set.")
-        if len(token) < MIN_TOKEN_LEN or token.lower().startswith("change-me"):
-            raise ConfigError(
-                f"{name} is a placeholder or too short (min {MIN_TOKEN_LEN} chars)."
-            )
-    if reader == writer:
-        raise ConfigError("READER_TOKEN and WRITER_TOKEN must differ.")
+    token = env.get("MCP_TOKEN", "").strip()
+    if not token:
+        raise ConfigError("MCP_TOKEN is not set.")
+    if len(token) < MIN_TOKEN_LEN or token.lower().startswith("change-me"):
+        raise ConfigError(
+            f"MCP_TOKEN is a placeholder or too short (min {MIN_TOKEN_LEN} chars)."
+        )
 
     public_hostname = env.get("PUBLIC_HOSTNAME", "localhost").strip()
     if not public_hostname or "://" in public_hostname or "/" in public_hostname:
@@ -75,8 +70,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
 
     return Settings(
         root,
-        reader,
-        writer,
+        token,
         log_path.resolve(),
         public_hostname,
     )

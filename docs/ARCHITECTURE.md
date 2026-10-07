@@ -8,28 +8,23 @@ flowchart TD
     Ngrok --> PM2[PM2 process manager]
     PM2 --> HTTP[server.http_runner]
     HTTP --> Auth[Bearer authentication middleware]
-    Auth --> Reader[Reader MCP server]
-    Auth --> Writer[Writer MCP server]
-    Reader --> Sandbox[Workspace sandbox]
-    Writer --> Sandbox
+    Auth --> MCP[One MCP server with 10 tools]
+    MCP --> Sandbox[Workspace sandbox]
     Sandbox --> Files[Live workspace]
-    Reader --> Audit[JSONL audit log]
-    Writer --> Audit
-    Writer --> Git[Workspace Git repository]
+    MCP --> Audit[JSONL audit log]
+    MCP --> Git[Workspace Git repository]
 ```
 
-`server.http_runner` loads settings, builds two role-specific MCP server
-instances, and serves both under `/mcp`. `AuthenticationMiddleware` verifies
-the bearer token and routes the request to the reader or writer instance. The
-MCP SDK handles Streamable HTTP sessions; the application owns role selection,
-path safety, tool registration, and audit records.
+`server.http_runner` loads settings, builds one MCP server, and serves it under
+`/mcp`. `AuthenticationMiddleware` verifies the single bearer token before
+forwarding requests. The MCP SDK handles Streamable HTTP sessions; the
+application owns path safety, tool registration, and audit records.
 
 ## Tool surface
 
-| Role   | Tools                                                                               |
-| ------ | ----------------------------------------------------------------------------------- |
-| Reader | `list_files`, `read_file`, `search_files`, `append_state`, `git_status`, `git_diff` |
-| Writer | All reader tools plus `write_file`, `str_replace`, `delete_file`, `git_commit`      |
+| Authenticated MCP client | Tools                  |
+| ------------------------ | ---------------------- |
+| `MCP_TOKEN`              | All 10 workspace tools |
 
 The live workspace is external to the server repository. This keeps application
 code, credentials, logs, and workspace content separate while allowing the

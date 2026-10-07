@@ -13,4 +13,4 @@ regression tests.
 
 Outcome: completed. The service remains externally workspace-backed, the
 hostname is configured through `PUBLIC_HOSTNAME`, and the final verification
-was 227 passed with 7 Windows symlink tests skipped.
+was 230 passed with 7 Windows symlink tests skipped.

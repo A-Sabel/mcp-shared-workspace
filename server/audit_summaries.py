@@ -29,11 +29,7 @@ def write_summary(
 
     return {
         "path": path,
-        "bytes": (
-            len(content.encode("utf-8"))
-            if isinstance(content, str)
-            else None
-        ),
+        "bytes": (len(content.encode("utf-8")) if isinstance(content, str) else None),
     }
 
 
@@ -135,14 +131,27 @@ def git_commit_summary(
         paths = args[1]
 
     return {
-        "message_chars": (
-            len(message)
-            if isinstance(message, str)
-            else None
-        ),
-        "path_count": (
-            len(paths)
-            if isinstance(paths, list)
-            else None
-        ),
+        "message_chars": (len(message) if isinstance(message, str) else None),
+        "path_count": (len(paths) if isinstance(paths, list) else None),
     }
+
+
+def git_status_summary(
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> dict[str, Any]:
+    """Return bounded metadata for a git_status call."""
+    return {}
+
+
+def git_diff_summary(
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> dict[str, Any]:
+    """Return the requested diff path without logging command output."""
+    path = kwargs.get("path")
+
+    if path is None and args:
+        path = args[0]
+
+    return {"path": path}

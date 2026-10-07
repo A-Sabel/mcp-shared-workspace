@@ -3,34 +3,11 @@ from starlette.testclient import TestClient
 from server.security.http_auth import AuthenticationMiddleware
 from server.security.token_verifier import WorkspaceTokenVerifier
 
-
-READER_TOKEN = "reader-token-123456"
-WRITER_TOKEN = "writer-token-654321"
+MCP_TOKEN = "mcp-token-123456"
 
 
 def make_test_app():
-    async def reader_app(scope, receive, send):
-        body = b"reader"
-
-        await send(
-            {
-                "type": "http.response.start",
-                "status": 200,
-                "headers": [
-                    (b"content-type", b"text/plain"),
-                    (b"content-length", str(len(body)).encode()),
-                ],
-            }
-        )
-
-        await send(
-            {
-                "type": "http.response.body",
-                "body": body,
-            }
-        )
-
-    async def writer_app(scope, receive, send):
+    async def mcp_app(scope, receive, send):
         body = b"writer"
 
         await send(
@@ -52,44 +29,41 @@ def make_test_app():
         )
 
     verifier = WorkspaceTokenVerifier(
-        reader_token=READER_TOKEN,
-        writer_token=WRITER_TOKEN,
+        mcp_token=MCP_TOKEN,
     )
 
     return AuthenticationMiddleware(
-        reader_app,
-        reader_app=reader_app,
-        writer_app=writer_app,
+        mcp_app,
         verifier=verifier,
     )
 
 
-def test_reader_token_routes_to_reader():
+def test_authenticated_token_forwards_to_mcp_app():
     client = TestClient(make_test_app())
 
     response = client.get(
         "/mcp",
         headers={
-            "Authorization": f"Bearer {READER_TOKEN}",
-        },
-    )
-
-    assert response.status_code == 200
-    assert response.text == "reader"
-
-
-def test_writer_token_routes_to_writer():
-    client = TestClient(make_test_app())
-
-    response = client.get(
-        "/mcp",
-        headers={
-            "Authorization": f"Bearer {WRITER_TOKEN}",
+            "Authorization": f"Bearer {MCP_TOKEN}",
         },
     )
 
     assert response.status_code == 200
     assert response.text == "writer"
+
+
+def test_authenticated_health_check_returns_ok():
+    client = TestClient(make_test_app())
+
+    response = client.get(
+        "/health",
+        headers={
+            "Authorization": f"Bearer {MCP_TOKEN}",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.text == "ok"
 
 
 def test_missing_token_returns_401():
@@ -121,7 +95,7 @@ def test_wrong_auth_scheme_returns_401():
     response = client.get(
         "/mcp",
         headers={
-            "Authorization": f"Basic {READER_TOKEN}",
+            "Authorization": f"Basic {MCP_TOKEN}",
         },
     )
 

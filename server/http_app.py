@@ -16,17 +16,10 @@ def build_http_app(settings: Settings) -> ASGIApp:
     """
     Build the authenticated Streamable HTTP application.
 
-    Two separate MCPServer instances are used:
-      - reader_server exposes reader tools only
-      - writer_server exposes reader + writer tools
-
-    Authentication middleware chooses which server receives
-    each request based on the Bearer token.
+        One MCPServer instance exposes the complete authenticated toolbox.
     """
 
-    # Create role-specific MCP servers
-    reader_server = build_server("reader", settings)
-    writer_server = build_server("writer", settings)
+    mcp_server = build_server(settings)
 
     # Transport security
     # Allow:
@@ -51,13 +44,7 @@ def build_http_app(settings: Settings) -> ASGIApp:
     )
 
     # Create Streamable HTTP applications
-    reader_app = reader_server.streamable_http_app(
-        streamable_http_path="/mcp",
-        transport_security=transport_security,
-        host="testserver",
-    )
-
-    writer_app = writer_server.streamable_http_app(
+    mcp_app = mcp_server.streamable_http_app(
         streamable_http_path="/mcp",
         transport_security=transport_security,
         host="testserver",
@@ -65,28 +52,21 @@ def build_http_app(settings: Settings) -> ASGIApp:
 
     # Token verifier
     verifier = WorkspaceTokenVerifier(
-        reader_token=settings.reader_token,
-        writer_token=settings.writer_token,
+        mcp_token=settings.mcp_token,
         resource=f"https://{public_hostname}/mcp",
     )
 
     # Authentication + role routing
     authenticated_app = AuthenticationMiddleware(
-        app=reader_app,
-        reader_app=reader_app,
-        writer_app=writer_app,
+        app=mcp_app,
         verifier=verifier,
     )
 
     # Parent application lifespan
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
-        reader_manager = reader_server.session_manager
-        writer_manager = writer_server.session_manager
-
-        async with reader_manager.run():
-            async with writer_manager.run():
-                yield
+        async with mcp_server.session_manager.run():
+            yield
 
     # Return host application
     return Starlette(

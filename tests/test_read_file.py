@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 from mcp.server.mcpserver import MCPServer
 
-from server.roles import READER, WRITER, is_allowed
 from server.sandbox import Sandbox
 from server.tools.file_tools import (
     MAX_READ_LINES,
@@ -41,9 +40,7 @@ def test_non_contiguous_ranges_across_files_keep_requested_order(sandbox):
         ],
     )
     assert result == (
-        "one.txt:1-1\n1: alpha\n\n"
-        "two.txt:2-2\n2: dos\n\n"
-        "one.txt:3-3\n3: gamma"
+        "one.txt:1-1\n1: alpha\n\n" "two.txt:2-2\n2: dos\n\n" "one.txt:3-3\n3: gamma"
     )
 
 
@@ -74,9 +71,18 @@ def test_range_start_past_eof_has_explicit_empty_result(sandbox):
     "ranges, message",
     [
         ([], "At least one range"),
-        ([{"path": "one.txt", "start": 1, "end": 1}] * (MAX_READ_RANGES + 1), "At most 5 ranges"),
-        ([{"path": "one.txt", "start": 1, "end": MAX_READ_LINES + 1}], "at most 200 lines"),
-        ([{"path": "one.txt", "start": 3, "end": 2}], "end must be greater than or equal"),
+        (
+            [{"path": "one.txt", "start": 1, "end": 1}] * (MAX_READ_RANGES + 1),
+            "At most 5 ranges",
+        ),
+        (
+            [{"path": "one.txt", "start": 1, "end": MAX_READ_LINES + 1}],
+            "at most 200 lines",
+        ),
+        (
+            [{"path": "one.txt", "start": 3, "end": 2}],
+            "end must be greater than or equal",
+        ),
         ([{"path": "one.txt", "start": 0, "end": 2}], "Invalid range"),
         ([{"path": "one.txt", "start": 1, "end": 2, "other": 1}], "Invalid range"),
         ([{"path": "one.txt", "start": True, "end": 2}], "Invalid range"),
@@ -101,7 +107,9 @@ def test_missing_file_and_directory_are_rejected(sandbox, path):
         read_file_impl(sandbox, [{"path": path, "start": 1, "end": 1}])
 
 
-@pytest.mark.parametrize("path", ["../outside.txt", ".env", "credentials.pem", ".git/config"])
+@pytest.mark.parametrize(
+    "path", ["../outside.txt", ".env", "credentials.pem", ".git/config"]
+)
 def test_sandbox_rejects_traversal_and_protected_paths(sandbox, path):
     with pytest.raises(ValueError):
         read_file_impl(sandbox, [{"path": path, "start": 1, "end": 1}])
@@ -113,18 +121,12 @@ def test_invalid_utf8_is_reported_as_text_read_error(sandbox):
         read_file_impl(sandbox, [{"path": "binary.bin", "start": 1, "end": 1}])
 
 
-def test_read_file_role_allows_reader_and_writer():
-    assert is_allowed("read_file", READER)
-    assert is_allowed("read_file", WRITER)
-
-
-@pytest.mark.parametrize("role", [READER, WRITER])
-def test_read_file_is_registered_for_both_authorized_roles(tmp_path, role):
+def test_read_file_is_registered_for_authenticated_client(tmp_path):
     root = tmp_path / "workspace"
     root.mkdir()
-    mcp = MCPServer(f"test-{role}")
+    mcp = MCPServer("test-client")
 
-    register(mcp, Sandbox(root), role)
+    register(mcp, Sandbox(root))
 
     names = {tool.name for tool in asyncio.run(mcp.list_tools())}
     assert "read_file" in names

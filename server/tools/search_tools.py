@@ -12,10 +12,8 @@ from pydantic import Field
 from server.audit_summaries import search_summary
 from server.audited_tool import audited
 from server.config import SEARCH_LIMIT, SNIPPET_CHARS
-from server.roles import is_allowed
 from server.sandbox import Sandbox, SandboxError
 from server.tools.file_tools import _glob_match, _walk
-
 
 MAX_SEARCH_FILE_BYTES = 5_000_000
 
@@ -33,9 +31,7 @@ def search_files_impl(
         raise ValueError("query must not be empty.")
 
     if limit < 1 or limit > SEARCH_LIMIT:
-        raise ValueError(
-            f"limit must be between 1 and {SEARCH_LIMIT}."
-        )
+        raise ValueError(f"limit must be between 1 and {SEARCH_LIMIT}.")
 
     base = sandbox.resolve(path)
 
@@ -59,16 +55,10 @@ def search_files_impl(
             output=found,
         )
 
-        candidates = [
-            item_path
-            for item_path, is_dir in found
-            if not is_dir
-        ]
+        candidates = [item_path for item_path, is_dir in found if not is_dir]
 
     else:
-        raise SandboxError(
-            f"Path {path!r} is not a file or directory."
-        )
+        raise SandboxError(f"Path {path!r} is not a file or directory.")
 
     if glob:
         candidates = [
@@ -90,9 +80,7 @@ def search_files_impl(
         try:
             pattern = re.compile(query)
         except re.error as exc:
-            raise ValueError(
-                f"Invalid regular expression: {exc}"
-            ) from None
+            raise ValueError(f"Invalid regular expression: {exc}") from None
 
     results: list[str] = []
 
@@ -130,14 +118,10 @@ def search_files_impl(
                     snippet = text.strip()
 
                     if len(snippet) > SNIPPET_CHARS:
-                        snippet = (
-                            snippet[:SNIPPET_CHARS].rstrip()
-                            + "..."
-                        )
+                        snippet = snippet[:SNIPPET_CHARS].rstrip() + "..."
 
                     results.append(
-                        f"{sandbox.relative(candidate)}:"
-                        f"{line_number}: {snippet}"
+                        f"{sandbox.relative(candidate)}:" f"{line_number}: {snippet}"
                     )
 
                     if len(results) >= limit:
@@ -154,10 +138,7 @@ def search_files_impl(
     if not results:
         return "No matches."
 
-    output = [
-        f"Found {len(results)} "
-        f"match{'es' if len(results) != 1 else ''}:"
-    ]
+    output = [f"Found {len(results)} " f"match{'es' if len(results) != 1 else ''}:"]
 
     output.extend(results)
 
@@ -184,7 +165,7 @@ SEARCH_FILES_DESCRIPTION = (
 def register(
     mcp: MCPServer,
     sandbox: Sandbox,
-    role: str,
+    client_id: str = "workspace-client",
     log_path: Path | None = None,
 ) -> None:
     """Register search_files when the supplied role is authorized."""
@@ -192,12 +173,9 @@ def register(
     if log_path is None:
         log_path = sandbox.root / ".tool_calls.jsonl"
 
-    if not is_allowed("search_files", role):
-        return
-
     @audited(
         tool_name="search_files",
-        role=role,
+        role=client_id,
         log_path=log_path,
         summarize=search_summary,
     )
@@ -207,9 +185,7 @@ def register(
             Field(
                 min_length=1,
                 max_length=500,
-                description=(
-                    "Text or regular expression to search for."
-                ),
+                description=("Text or regular expression to search for."),
             ),
         ],
         path: Annotated[
@@ -226,8 +202,7 @@ def register(
             Field(
                 max_length=200,
                 description=(
-                    "Optional filename or relative-path glob, "
-                    "for example '*.py'."
+                    "Optional filename or relative-path glob, " "for example '*.py'."
                 ),
             ),
         ] = None,
@@ -245,9 +220,7 @@ def register(
             Field(
                 ge=1,
                 le=SEARCH_LIMIT,
-                description=(
-                    "Maximum number of matching lines to return."
-                ),
+                description=("Maximum number of matching lines to return."),
             ),
         ] = SEARCH_LIMIT,
     ) -> str:

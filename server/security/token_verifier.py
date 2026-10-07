@@ -1,24 +1,20 @@
+from hmac import compare_digest
+
 from mcp.server.auth.provider import AccessToken
 
 
 class WorkspaceTokenVerifier:
-    """Verify the shared-workspace reader and writer bearer tokens."""
+    """Verify the shared-workspace bearer token."""
 
     def __init__(
         self,
         *,
-        reader_token: str,
-        writer_token: str,
+        mcp_token: str,
         resource: str | None = None,
     ) -> None:
-        if not reader_token or not writer_token:
-            raise ValueError("Reader and writer tokens are required.")
-
-        if reader_token == writer_token:
-            raise ValueError("Reader and writer tokens must differ.")
-
-        self.reader_token = reader_token
-        self.writer_token = writer_token
+        if not mcp_token:
+            raise ValueError("MCP token is required.")
+        self.mcp_token = mcp_token
         self.resource = resource
 
     async def verify_token(
@@ -27,28 +23,14 @@ class WorkspaceTokenVerifier:
     ) -> AccessToken | None:
         """Return MCP access information for a valid workspace token."""
 
-        if token == self.reader_token:
+        if compare_digest(token, self.mcp_token):
             return AccessToken(
                 token=token,
-                client_id="workspace-reader",
+                client_id="workspace-client",
                 scopes=["workspace"],
                 resource=self.resource,
-                subject="reader",
-                claims={
-                    "role": "reader",
-                },
-            )
-
-        if token == self.writer_token:
-            return AccessToken(
-                token=token,
-                client_id="workspace-writer",
-                scopes=["workspace"],
-                resource=self.resource,
-                subject="writer",
-                claims={
-                    "role": "writer",
-                },
+                subject="workspace-client",
+                claims={},
             )
 
         return None

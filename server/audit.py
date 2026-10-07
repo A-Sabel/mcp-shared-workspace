@@ -6,7 +6,6 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
-
 _AUDIT_LOCK = Lock()
 
 
@@ -24,10 +23,7 @@ def _safe_value(value: Any) -> Any:
         return [_safe_value(item) for item in value[:20]]
 
     if isinstance(value, dict):
-        return {
-            str(key): _safe_value(item)
-            for key, item in list(value.items())[:20]
-        }
+        return {str(key): _safe_value(item) for key, item in list(value.items())[:20]}
 
     return str(value)[:200]
 
@@ -36,18 +32,16 @@ def audit_tool_call(
     log_path: Path,
     *,
     tool: str,
-    role: str,
+    client: str,
     success: bool,
     arguments: dict[str, Any] | None = None,
     error: str | None = None,
 ) -> None:
     """Append one sanitized tool-call record to the JSONL audit log."""
     record = {
-        "timestamp": datetime.now(timezone.utc).isoformat(
-            timespec="seconds"
-        ),
+        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "tool": tool,
-        "role": role,
+        "client": client,
         "success": success,
     }
 

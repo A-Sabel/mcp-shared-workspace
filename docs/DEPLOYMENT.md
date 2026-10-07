@@ -4,8 +4,9 @@
 
 1. Create the external workspace and seed it from `examples/workspace`.
 2. Copy `.env.example` to `.env`.
-3. Set `WORKSPACE_ROOT`, distinct tokens, and `PUBLIC_HOSTNAME` to the ngrok
-   hostname only, for example `example.ngrok-free.dev`.
+3. Set `WORKSPACE_ROOT`, one `MCP_TOKEN`, and `PUBLIC_HOSTNAME` to the ngrok
+   hostname only, for example
+   `example.ngrok-free.dev`.
 4. Keep `.env` local; it is ignored by Git.
 
 ## Start
@@ -36,7 +37,7 @@ pm2 logs mcp-workspace --lines 50
 
 The health path requires authentication and should return `401` without a
 Bearer token. Use the MCP Inspector against `https://<PUBLIC_HOSTNAME>/mcp`
-with the matching Reader or Writer token.
+with the configured `MCP_TOKEN`; the connection should expose all ten tools.
 
 ## Stop
 

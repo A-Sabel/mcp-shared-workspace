@@ -6,20 +6,19 @@ from starlette.testclient import TestClient
 
 from server.config import Settings
 from server.http_app import build_http_app
-from server.roles import READER, WRITER
 
-READER_TOKEN = "reader-token-123456"
-WRITER_TOKEN = "writer-token-654321"
+MCP_TOKEN = "mcp-token-123456"
 
 
-def make_settings(tmp_path: Path) -> Settings:
+def make_settings(
+    tmp_path: Path,
+) -> Settings:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
 
     return Settings(
         workspace_root=workspace,
-        reader_token=READER_TOKEN,
-        writer_token=WRITER_TOKEN,
+        mcp_token=MCP_TOKEN,
         log_path=tmp_path / "tool_calls.jsonl",
     )
 
@@ -123,54 +122,116 @@ def list_tools(
     return result["result"]["tools"]
 
 
-def test_reader_can_initialize_and_only_sees_reader_tools(tmp_path: Path):
+def call_tool(
+    client: TestClient,
+    token: str,
+    session_id: str,
+    name: str,
+    arguments: dict,
+):
+    response = client.post(
+        "/mcp",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+            "Mcp-Session-Id": session_id,
+        },
+        json={
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": name,
+                "arguments": arguments,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+
+    result = extract_json(response)
+
+    assert result["jsonrpc"] == "2.0"
+    assert result["id"] == 3
+    assert "result" in result
+
+    return result["result"]
+
+
+def test_tool_call_returns_content_and_error_flag(tmp_path: Path):
     settings = make_settings(tmp_path)
     app = build_http_app(settings)
 
     with TestClient(app) as client:
-        session_id = initialize_session(
-            client,
-            READER_TOKEN,
-        )
+        session_id = initialize_session(client, MCP_TOKEN)
 
-        tools = list_tools(
+        success = call_tool(
             client,
-            READER_TOKEN,
+            MCP_TOKEN,
             session_id,
+            "list_files",
+            {"path": "."},
         )
 
-        names = {tool["name"] for tool in tools}
+        assert success["content"]
+        assert success["content"][0]["type"] == "text"
+        assert success.get("isError", False) is False
 
-        expected_reader_tools = {
-            "list_files",
+        failure = call_tool(
+            client,
+            MCP_TOKEN,
+            session_id,
             "read_file",
-            "search_files",
-            "append_state",
-            "git_status",
-            "git_diff",
-        }
+            {
+                "ranges": [
+                    {
+                        "path": "missing.txt",
+                        "start": 1,
+                        "end": 1,
+                    }
+                ],
+            },
+        )
 
-        assert names == expected_reader_tools
-
-        assert "write_file" not in names
-        assert "str_replace" not in names
-        assert "delete_file" not in names
-        assert "git_commit" not in names
+        assert failure["content"]
+        assert failure["content"][0]["type"] == "text"
+        assert "missing.txt" in failure["content"][0]["text"]
+        assert failure["isError"] is True
 
 
-def test_writer_can_initialize_and_sees_all_tools(tmp_path: Path):
+def test_append_state_schema_exposes_handoff_file_enum(tmp_path: Path):
+    settings = make_settings(tmp_path)
+    app = build_http_app(settings)
+
+    with TestClient(app) as client:
+        session_id = initialize_session(client, MCP_TOKEN)
+        tools = list_tools(client, MCP_TOKEN, session_id)
+
+    append_state = next(tool for tool in tools if tool["name"] == "append_state")
+    file_schema = append_state["inputSchema"]["properties"]["file"]
+
+    assert file_schema["enum"] == [
+        "PROJECT_STATE.md",
+        "PLAN_LOG.md",
+        "CHECKPOINTS.md",
+        "DECISIONS.md",
+    ]
+
+
+def test_authenticated_client_sees_all_tools(tmp_path: Path):
     settings = make_settings(tmp_path)
     app = build_http_app(settings)
 
     with TestClient(app) as client:
         session_id = initialize_session(
             client,
-            WRITER_TOKEN,
+            MCP_TOKEN,
         )
 
         tools = list_tools(
             client,
-            WRITER_TOKEN,
+            MCP_TOKEN,
             session_id,
         )
 

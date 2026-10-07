@@ -8,14 +8,12 @@ from server.audit_summaries import state_summary
 from server.audited_tool import audited
 
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import Annotated, Literal
 
 from mcp.server.mcpserver import MCPServer
 from pydantic import Field
 
-from server.roles import is_allowed
 from server.sandbox import Sandbox, SandboxError
-
 
 HANDOFF_FILES = (
     "PROJECT_STATE.md",
@@ -23,6 +21,13 @@ HANDOFF_FILES = (
     "CHECKPOINTS.md",
     "DECISIONS.md",
 )
+
+HandoffFile = Literal[
+    "PROJECT_STATE.md",
+    "PLAN_LOG.md",
+    "CHECKPOINTS.md",
+    "DECISIONS.md",
+]
 
 MAX_ENTRY_CHARS = 5_000
 
@@ -35,18 +40,13 @@ def append_state_impl(
     """Append one bounded entry to an approved handoff file."""
     if file not in HANDOFF_FILES:
         allowed = ", ".join(HANDOFF_FILES)
-        raise ValueError(
-            f"Invalid state file {file!r}. "
-            f"Allowed files: {allowed}."
-        )
+        raise ValueError(f"Invalid state file {file!r}. " f"Allowed files: {allowed}.")
 
     if not isinstance(entry, str) or not entry.strip():
         raise ValueError("entry must not be empty.")
 
     if len(entry) > MAX_ENTRY_CHARS:
-        raise ValueError(
-            f"entry exceeds the {MAX_ENTRY_CHARS}-character limit."
-        )
+        raise ValueError(f"entry exceeds the {MAX_ENTRY_CHARS}-character limit.")
 
     path = sandbox.resolve(file, for_write=True)
 
@@ -57,38 +57,24 @@ def append_state_impl(
         )
 
     if not path.is_file():
-        raise ValueError(
-            f"State path {file!r} is not a file."
-        )
+        raise ValueError(f"State path {file!r} is not a file.")
 
     # The filename is restricted above, but keep this check explicit.
     if path.name not in HANDOFF_FILES:
-        raise SandboxError(
-            f"State file {file!r} is not an approved handoff file."
-        )
+        raise SandboxError(f"State file {file!r} is not an approved handoff file.")
 
-    timestamp = datetime.now(timezone.utc).isoformat(
-        timespec="seconds"
-    )
+    timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
-    block = (
-        f"\n\n### {timestamp} UTC\n"
-        f"{entry.strip()}\n"
-    )
+    block = f"\n\n### {timestamp} UTC\n" f"{entry.strip()}\n"
 
     try:
         with path.open("a", encoding="utf-8") as stream:
             stream.write(block)
     except OSError as exc:
         detail = exc.strerror or "I/O error"
-        raise ValueError(
-            f"Cannot append to {file!r}: {detail}."
-        ) from None
+        raise ValueError(f"Cannot append to {file!r}: {detail}.") from None
 
-    return (
-        f"Appended {len(entry.strip())} characters "
-        f"to {file}."
-    )
+    return f"Appended {len(entry.strip())} characters " f"to {file}."
 
 
 APPEND_STATE_DESCRIPTION = (
@@ -102,26 +88,22 @@ APPEND_STATE_DESCRIPTION = (
 def register(
     mcp: MCPServer,
     sandbox: Sandbox,
-    role: str,
+    client_id: str = "workspace-client",
     log_path: Path | None = None,
 ) -> None:
     """Register append_state when the supplied role is authorized."""
     if log_path is None:
         log_path = sandbox.root / ".tool_calls.jsonl"
 
-    if not is_allowed("append_state", role):
-        return
-
     @audited(
         tool_name="append_state",
-        role=role,
+        role=client_id,
         log_path=log_path,
         summarize=state_summary,
     )
-
     def append_state(
         file: Annotated[
-            str,
+            HandoffFile,
             Field(
                 description=(
                     "One of PROJECT_STATE.md, PLAN_LOG.md, "
@@ -135,8 +117,7 @@ def register(
                 min_length=1,
                 max_length=MAX_ENTRY_CHARS,
                 description=(
-                    "Concise information to append for the next "
-                    "agent session."
+                    "Concise information to append for the next " "agent session."
                 ),
             ),
         ],

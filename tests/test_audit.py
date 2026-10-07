@@ -11,21 +11,19 @@ def test_audit_writes_jsonl_record(tmp_path):
     audit_tool_call(
         log_path,
         tool="read_file",
-        role="reader",
+        client="workspace-client",
         success=True,
         arguments={"path": "README.md"},
     )
 
-    lines = log_path.read_text(
-        encoding="utf-8"
-    ).splitlines()
+    lines = log_path.read_text(encoding="utf-8").splitlines()
 
     assert len(lines) == 1
 
     record = json.loads(lines[0])
 
     assert record["tool"] == "read_file"
-    assert record["role"] == "reader"
+    assert record["client"] == "workspace-client"
     assert record["success"] is True
     assert record["arguments"]["path"] == "README.md"
     assert "timestamp" in record
@@ -37,17 +35,13 @@ def test_audit_records_failure(tmp_path):
     audit_tool_call(
         log_path,
         tool="write_file",
-        role="writer",
+        client="workspace-client",
         success=False,
         arguments={"path": ".env"},
         error="Protected path.",
     )
 
-    record = json.loads(
-        log_path.read_text(
-            encoding="utf-8"
-        ).splitlines()[0]
-    )
+    record = json.loads(log_path.read_text(encoding="utf-8").splitlines()[0])
 
     assert record["tool"] == "write_file"
     assert record["success"] is False
@@ -60,7 +54,7 @@ def test_audit_truncates_long_strings(tmp_path):
     audit_tool_call(
         log_path,
         tool="write_file",
-        role="writer",
+        client="workspace-client",
         success=True,
         arguments={
             "path": "example.txt",
@@ -68,11 +62,7 @@ def test_audit_truncates_long_strings(tmp_path):
         },
     )
 
-    record = json.loads(
-        log_path.read_text(
-            encoding="utf-8"
-        ).splitlines()[0]
-    )
+    record = json.loads(log_path.read_text(encoding="utf-8").splitlines()[0])
 
     content = record["arguments"]["content"]
 
@@ -86,7 +76,7 @@ def test_audit_handles_nested_arguments(tmp_path):
     audit_tool_call(
         log_path,
         tool="read_file",
-        role="reader",
+        client="workspace-client",
         success=True,
         arguments={
             "ranges": [
@@ -96,10 +86,6 @@ def test_audit_handles_nested_arguments(tmp_path):
         },
     )
 
-    record = json.loads(
-        log_path.read_text(
-            encoding="utf-8"
-        ).splitlines()[0]
-    )
+    record = json.loads(log_path.read_text(encoding="utf-8").splitlines()[0])
 
     assert len(record["arguments"]["ranges"]) == 2

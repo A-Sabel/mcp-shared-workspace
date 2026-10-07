@@ -1,14 +1,14 @@
 # MCP Shared Workspace Server
 
 A sandboxed Python MCP server exposes a persistent shared
-workspace over Streamable HTTP. It provides 10 tools, reader/writer roles,
+workspace over Streamable HTTP. It provides one authenticated 10-tool toolbox,
 append-only handoff files, audit logging, and Git operations.
 
 ## Capabilities
 
-Reader tokens expose `list_files`, `read_file`, `search_files`, `append_state`,
-`git_status`, and `git_diff`. Writer tokens additionally expose `write_file`,
-`str_replace`, `delete_file`, and `git_commit`.
+The configured `MCP_TOKEN` authenticates the MCP client, which receives all ten
+tools. The AI chooses the minimum necessary tool for each task; the server
+remains authoritative for sandbox validation and safety checks.
 
 Every filesystem path passes through the sandbox. Protected names, traversal,
 symlink escapes, oversized reads/writes, and unsafe Git arguments are rejected.
@@ -26,8 +26,8 @@ Copy-Item .env.example .env
 ```
 
 Set `WORKSPACE_ROOT` to a separate directory containing the shared handoff
-files, generate distinct random `READER_TOKEN` and `WRITER_TOKEN` values, and
-set `PUBLIC_HOSTNAME` to the ngrok hostname without `https://`.
+files, generate one random `MCP_TOKEN`, and set
+`PUBLIC_HOSTNAME` to the ngrok hostname without `https://`.
 
 To seed a workspace:
 

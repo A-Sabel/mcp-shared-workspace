@@ -4,19 +4,15 @@ from server.security.token_verifier import WorkspaceTokenVerifier
 
 
 class AuthenticationMiddleware:
-    """Route authenticated HTTP requests to the role-specific MCP app."""
+    """Authenticate HTTP requests before forwarding them to the MCP app."""
 
     def __init__(
         self,
         app: ASGIApp,
         *,
-        reader_app: ASGIApp,
-        writer_app: ASGIApp,
         verifier: WorkspaceTokenVerifier,
     ) -> None:
         self.app = app
-        self.reader_app = reader_app
-        self.writer_app = writer_app
         self.verifier = verifier
 
     async def __call__(
@@ -61,17 +57,11 @@ class AuthenticationMiddleware:
             await self._unauthorized(send, "Invalid authentication token.")
             return
 
-        role = (access_token.claims or {}).get("role")
-
-        if role == "reader":
-            await self.reader_app(scope, receive, send)
+        if scope.get("path") == "/health" and scope.get("method") == "GET":
+            await self._healthy(send)
             return
 
-        if role == "writer":
-            await self.writer_app(scope, receive, send)
-            return
-
-        await self._unauthorized(send, "Authenticated token has no valid role.")
+        await self.app(scope, receive, send)
 
     @staticmethod
     async def _unauthorized(send: Send, message: str) -> None:
@@ -85,6 +75,28 @@ class AuthenticationMiddleware:
                     (b"content-type", b"text/plain; charset=utf-8"),
                     (b"content-length", str(len(body)).encode("ascii")),
                     (b"www-authenticate", b"Bearer"),
+                ],
+            }
+        )
+
+        await send(
+            {
+                "type": "http.response.body",
+                "body": body,
+            }
+        )
+
+    @staticmethod
+    async def _healthy(send: Send) -> None:
+        body = b"ok"
+
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [
+                    (b"content-type", b"text/plain; charset=utf-8"),
+                    (b"content-length", str(len(body)).encode("ascii")),
                 ],
             }
         )

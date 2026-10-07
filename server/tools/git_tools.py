@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from server.audit_summaries import git_commit_summary
+from server.audit_summaries import (
+    git_commit_summary,
+    git_diff_summary,
+    git_status_summary,
+)
 from server.audited_tool import audited
 
 import subprocess
@@ -14,7 +18,6 @@ from mcp.server.mcpserver import MCPServer
 from pydantic import Field
 
 from server.config import MAX_GIT_OUTPUT_CHARS
-from server.roles import is_allowed
 from server.sandbox import Sandbox, SandboxError
 
 MAX_COMMIT_MESSAGE_CHARS = 200
@@ -39,9 +42,7 @@ def _run_git(
             check=False,
         )
     except OSError as exc:
-        raise ValueError(
-            f"Unable to run Git: {exc}."
-        ) from None
+        raise ValueError(f"Unable to run Git: {exc}.") from None
 
 
 def _bounded_output(
@@ -58,10 +59,7 @@ def _bounded_output(
             output = stderr.strip()
 
     if len(output) > MAX_GIT_OUTPUT_CHARS:
-        output = (
-            output[:MAX_GIT_OUTPUT_CHARS].rstrip()
-            + "\n[output truncated]"
-        )
+        output = output[:MAX_GIT_OUTPUT_CHARS].rstrip() + "\n[output truncated]"
 
     return output
 
@@ -88,10 +86,7 @@ def git_status_impl(sandbox: Sandbox) -> str:
             result.stdout,
             result.stderr,
         )
-        raise ValueError(
-            f"git status failed"
-            f"{f': {detail}' if detail else '.'}"
-        )
+        raise ValueError(f"git status failed" f"{f': {detail}' if detail else '.'}")
 
     output = _bounded_output(
         result.stdout,
@@ -134,10 +129,7 @@ def git_diff_impl(
             result.stdout,
             result.stderr,
         )
-        raise ValueError(
-            f"git diff failed"
-            f"{f': {detail}' if detail else '.'}"
-        )
+        raise ValueError(f"git diff failed" f"{f': {detail}' if detail else '.'}")
 
     output = _bounded_output(
         result.stdout,
@@ -177,29 +169,21 @@ def git_commit_impl(
         )
 
     if len(paths) > MAX_COMMIT_PATHS:
-        raise ValueError(
-            f"At most {MAX_COMMIT_PATHS} paths may be committed at once."
-        )
+        raise ValueError(f"At most {MAX_COMMIT_PATHS} paths may be committed at once.")
 
     safe_paths: list[str] = []
 
     for index, path in enumerate(paths, start=1):
         if not isinstance(path, str) or not path.strip():
-            raise ValueError(
-                f"Path {index} must be a non-empty string."
-            )
+            raise ValueError(f"Path {index} must be a non-empty string.")
 
         try:
             resolved = sandbox.resolve(path, for_write=True)
         except SandboxError as exc:
-            raise ValueError(
-                f"Path {index} {path!r} is not allowed: {exc}"
-            ) from None
+            raise ValueError(f"Path {index} {path!r} is not allowed: {exc}") from None
 
         if resolved == sandbox.root:
-            raise ValueError(
-                "The workspace root itself cannot be committed as a path."
-            )
+            raise ValueError("The workspace root itself cannot be committed as a path.")
 
         relative = sandbox.relative(resolved)
 
@@ -224,10 +208,7 @@ def git_commit_impl(
             add_result.stdout,
             add_result.stderr,
         )
-        raise ValueError(
-            f"git add failed"
-            f"{f': {detail}' if detail else '.'}"
-        )
+        raise ValueError(f"git add failed" f"{f': {detail}' if detail else '.'}")
 
     commit_result = _run_git(
         sandbox,
@@ -245,10 +226,7 @@ def git_commit_impl(
             commit_result.stdout,
             commit_result.stderr,
         )
-        raise ValueError(
-            f"git commit failed"
-            f"{f': {detail}' if detail else '.'}"
-        )
+        raise ValueError(f"git commit failed" f"{f': {detail}' if detail else '.'}")
 
     output = _bounded_output(
         commit_result.stdout,
@@ -277,18 +255,25 @@ GIT_COMMIT_DESCRIPTION = (
     "sandbox, and protects sensitive paths."
 )
 
+
 def register(
     mcp: MCPServer,
     sandbox: Sandbox,
-    role: str,
+    client_id: str = "workspace-client",
     log_path: Path | None = None,
 ) -> None:
     """Register Git tools allowed for the supplied role."""
     if log_path is None:
         log_path = sandbox.root / ".tool_calls.jsonl"
 
-    if is_allowed("git_status", role):
+    if True:
 
+        @audited(
+            tool_name="git_status",
+            role=client_id,
+            log_path=log_path,
+            summarize=git_status_summary,
+        )
         def git_status() -> str:
             """Show concise Git status for the workspace."""
             return git_status_impl(sandbox)
@@ -300,8 +285,14 @@ def register(
             structured_output=False,
         )
 
-    if is_allowed("git_diff", role):
+    if True:
 
+        @audited(
+            tool_name="git_diff",
+            role=client_id,
+            log_path=log_path,
+            summarize=git_diff_summary,
+        )
         def git_diff(
             path: Annotated[
                 str | None,
@@ -323,14 +314,14 @@ def register(
             structured_output=False,
         )
 
-    if is_allowed("git_commit", role):
+    if True:
+
         @audited(
             tool_name="git_commit",
-            role=role,
+            role=client_id,
             log_path=log_path,
             summarize=git_commit_summary,
         )
-
         def git_commit(
             message: Annotated[
                 str,

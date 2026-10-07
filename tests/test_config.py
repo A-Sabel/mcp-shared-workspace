@@ -2,15 +2,13 @@ import pytest
 
 from server.config import ConfigError, load_settings
 
-GOOD_R = "r" * 20
-GOOD_W = "w" * 20
+GOOD_TOKEN = "t" * 20
 
 
 def env(tmp_path, **over):
     base = {
         "WORKSPACE_ROOT": str(tmp_path),
-        "READER_TOKEN": GOOD_R,
-        "WRITER_TOKEN": GOOD_W,
+        "MCP_TOKEN": GOOD_TOKEN,
     }
     base.update(over)
     return base
@@ -19,7 +17,7 @@ def env(tmp_path, **over):
 def test_valid_settings(tmp_path):
     s = load_settings(env(tmp_path))
     assert s.workspace_root == tmp_path.resolve()
-    assert (s.reader_token, s.writer_token) == (GOOD_R, GOOD_W)
+    assert s.mcp_token == GOOD_TOKEN
     assert s.public_hostname == "localhost"
 
 
@@ -33,10 +31,9 @@ def test_public_hostname_can_be_configured(tmp_path):
     [
         {"WORKSPACE_ROOT": ""},
         {"WORKSPACE_ROOT": "/definitely/not/here"},
-        {"READER_TOKEN": ""},
-        {"WRITER_TOKEN": "short"},
-        {"READER_TOKEN": "change-me-reader-token"},
-        {"WRITER_TOKEN": GOOD_R},  # same as reader
+        {"MCP_TOKEN": ""},
+        {"MCP_TOKEN": "short"},
+        {"MCP_TOKEN": "change-me-token"},
         {"PUBLIC_HOSTNAME": "https://example.ngrok-free.dev"},
         {"PUBLIC_HOSTNAME": "example.ngrok-free.dev/mcp"},
     ],
