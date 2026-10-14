@@ -59,7 +59,7 @@ function Clear-LogFile([string]$Path) {
     } catch { }
 }
 
-function Load-Settings {
+function Get-Settings {
     if (-not (Test-Path -LiteralPath $script:envPath)) { throw '.env is missing.' }
     if (-not (Test-Path -LiteralPath $script:pythonExe)) { throw 'Virtual environment Python was not found.' }
     foreach ($line in Get-Content -LiteralPath $script:envPath) {
@@ -94,7 +94,7 @@ function Save-WorkspaceRegistry {
     Move-Item -LiteralPath $temp -Destination $script:workspaceRegistry -Force
 }
 
-function Refresh-WorkspaceChoices {
+function Update-WorkspaceChoices {
     if (-not $script:workspaceCombo) { return }
     $previous = [string]$script:workspaceCombo.SelectedItem
     $script:workspaceCombo.Items.Clear()
@@ -113,7 +113,7 @@ function Update-SelectedWorkspace {
     }
 }
 
-function Load-WorkspaceRegistry {
+function Import-WorkspaceRegistry {
     $script:workspaces = [ordered]@{}
     if (Test-Path -LiteralPath $script:workspaceRegistry) {
         try {
@@ -134,7 +134,7 @@ function Load-WorkspaceRegistry {
         while ($script:workspaces.Contains($name)) { $name = "configured-root-$suffix"; $suffix++ }
         $script:workspaces[$name] = $configured
     }
-    Refresh-WorkspaceChoices
+    Update-WorkspaceChoices
 }
 
 function Register-WorkspaceFromForm {
@@ -153,18 +153,18 @@ function Register-WorkspaceFromForm {
     }
     $script:workspaces[$name] = $path
     Save-WorkspaceRegistry
-    Refresh-WorkspaceChoices
+    Update-WorkspaceChoices
     $script:workspaceCombo.SelectedItem = $name
     Add-Activity "Registered workspace '$name'."
 }
 
-function Quote-Arg([string]$Value) { return '"' + $Value.Replace('"', '\"') + '"' }
+function ConvertTo-QuotedArgument([string]$Value) { return '"' + $Value.Replace('"', '\"') + '"' }
 
 # Returns the command's stdout. Callers that don't need it should use [void].
 function Invoke-Pm2([string[]]$Pm2Args, [int]$Timeout = 30, [switch]$QuietError) {
     $psi = New-Object Diagnostics.ProcessStartInfo
     $psi.FileName = $script:nodeExe
-    $psi.Arguments = (@((Quote-Arg $script:pm2Cli)) + @($Pm2Args | ForEach-Object { Quote-Arg $_ })) -join ' '
+    $psi.Arguments = (@((ConvertTo-QuotedArgument $script:pm2Cli)) + @($Pm2Args | ForEach-Object { ConvertTo-QuotedArgument $_ })) -join ' '
     $psi.WorkingDirectory = $script:repo
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
@@ -431,7 +431,7 @@ function Start-Workspace {
     $script:status.Text = 'Starting...'
     [System.Windows.Forms.Application]::DoEvents()
     try {
-        Load-Settings
+        Get-Settings
         Set-LogCursor $script:serverLog
         Set-LogCursor $script:serverErrLog
         Stop-PreviousTunnel
@@ -477,8 +477,8 @@ function Start-Workspace {
         Set-LogCursor $script:ngrokLog
         $psi = New-Object Diagnostics.ProcessStartInfo
         $psi.FileName = $script:ngrokExe
-        $psi.Arguments = 'http 8000 --url ' + (Quote-Arg ('https://' + $script:hostname)) +
-            ' --log ' + (Quote-Arg $script:ngrokLog) + ' --log-format logfmt'
+        $psi.Arguments = 'http 8000 --url ' + (ConvertTo-QuotedArgument ('https://' + $script:hostname)) +
+            ' --log ' + (ConvertTo-QuotedArgument $script:ngrokLog) + ' --log-format logfmt'
         $psi.WorkingDirectory = $script:repo
         $psi.UseShellExecute = $false
         $psi.CreateNoWindow = $true
@@ -868,7 +868,7 @@ $script:statusTimer.Add_Tick({
 })
 
 $form.Add_FormClosing({
-    param($sender, $e)
+    param($eventSource, $e)
     if ($script:starting) {
         # Don't tear things down mid-start; Start-Workspace aborts at its next check and closes the form.
         $e.Cancel = $true
@@ -882,8 +882,8 @@ $form.Add_FormClosing({
 })
 
 try {
-    Load-Settings
-    Load-WorkspaceRegistry
+    Get-Settings
+    Import-WorkspaceRegistry
     Update-UsageView
     $script:url.Text = 'Claude connector URL: https://' + $script:hostname + '/mcp'
     Add-Activity 'Ready. Select or register a project, then Start. Switching while running restarts the server and tunnel.'
