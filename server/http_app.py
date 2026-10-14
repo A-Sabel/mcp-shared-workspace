@@ -104,17 +104,18 @@ def build_http_app(settings: Settings) -> ASGIApp:
         issuer_url,
         client_registration_options=ClientRegistrationOptions(
             enabled=True,
-            valid_scopes=["mcp", "workspace"],
+            valid_scopes=["mcp", "workspace", "offline_access"],
             # Gemini requests both scopes during authorization. Register new
             # clients for both so the SDK's per-client scope check accepts it.
-            default_scopes=["mcp", "workspace"],
+            # ChatGPT uses offline_access to request renewable OAuth sessions.
+            default_scopes=["mcp", "workspace", "offline_access"],
         ),
         revocation_options=RevocationOptions(enabled=True),
     )
     protected_resource_routes = create_protected_resource_routes(
         AnyHttpUrl(resource),
         [issuer_url],
-        scopes_supported=["mcp", "workspace"],
+        scopes_supported=["mcp", "workspace", "offline_access"],
         resource_name="MCP Shared Workspace",
     )
 
