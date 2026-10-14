@@ -12,6 +12,8 @@
 - Writes are bounded; state updates are append-only and limited to the four
   handoff files.
 - Tool calls are recorded as structured JSONL with redacted argument summaries.
+- The supported deployment uses one server process and a workspace directory
+  writable only by that server's trusted operating-system identity.
 - Transport host and origin checks remain enabled for TestClient and the
   configured public hostname.
 
@@ -20,10 +22,16 @@
 - A hard link inside the workspace can refer to an outside inode and cannot be
   identified using path checks alone.
 - A symlink can be swapped between validation and the file operation (TOCTOU).
-  The workspace must be writable only by trusted processes.
-- Seven symlink-focused tests are skipped on the current Windows environment
-  because symlink creation is unavailable. Run the suite on a symlink-capable
-  system for full coverage; the production security logic is unchanged.
+  Path checks do not make operations safe against a hostile concurrent writer.
+  Do not grant write access to `WORKSPACE_ROOT` to other operating-system
+  accounts or untrusted services. On Windows, configure and review the
+  directory ACL for the PM2 account; on POSIX, use a dedicated service account
+  and restrictive ownership and permissions. Processes running as an
+  authorized account are trusted by this deployment model. This boundary does
+  not make the file operations race-resistant if that account or process is
+  compromised.
+- Windows may skip symlink-focused tests when the runner lacks symlink
+  privileges. The Linux CI job is intended to run the symlink cases.
 - Free ngrok hostnames can change. Set `PUBLIC_HOSTNAME` and restart PM2 when
   the tunnel hostname changes.
 

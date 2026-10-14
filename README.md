@@ -41,7 +41,7 @@ Requires Python 3.10+.
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements-lock.txt
+pip install -r requirements/requirements-lock.txt
 Copy-Item .env.example .env
 ```
 
@@ -80,11 +80,12 @@ all 10 tools to the authenticated client. The server remains responsible for
 path validation, protected files, write limits, Git safety, soft-delete, and
 audit logging.
 
-To replicate the public deployment with PM2 and ngrok:
+The Windows PM2 configuration and hidden launcher are grouped in
+`deployment/windows/`. To replicate the public deployment with PM2 and ngrok:
 
 ```powershell
 ngrok http 8000
-pm2 start ecosystem.config.cjs
+pm2 start deployment\windows\ecosystem.config.cjs
 pm2 save
 pm2 status
 ```
@@ -114,11 +115,14 @@ acceptance flow is in [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
 ## Project Map
 
 ```text
-server/             MCP server, sandbox, tools, auth, audit, HTTP entry point
-examples/workspace/ Seed handoff files
-tests/              unit, security, HTTP, and MCP integration tests
-docs/               architecture, security, deployment, evidence, demo
-logs/               local audit output; ignored by Git
+.github/             CI and dependency update automation
+server/              MCP app, core sandbox/audit, tools, and security modules
+tests/               Unit, security, HTTP, and MCP integration tests
+docs/                Architecture, security, operations, demo, and tracking
+deployment/windows/  PM2 configuration and hidden Windows launcher
+examples/workspace/  Seed handoff files for the external workspace
+requirements/        Runtime, locked, and development dependency manifests
+README.md            Setup, capabilities, and project entry points
 ```
 
 The stdio development entry point is `python -m server.main`.

@@ -15,7 +15,7 @@ from pydantic import Field
 import shutil
 
 from server.config import MAX_WRITE_BYTES
-from server.sandbox import Sandbox, SandboxError
+from server.sandbox import Sandbox
 
 MAX_REPLACE_TEXT_CHARS = 50_000
 MAX_REPLACEMENTS = 100

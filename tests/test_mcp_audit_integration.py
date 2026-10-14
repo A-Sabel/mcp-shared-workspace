@@ -4,7 +4,6 @@ from pathlib import Path
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from server.audit import audit_tool_call
 from server.audited_tool import audited
 from server.sandbox import Sandbox
 from server.tools import git_tools

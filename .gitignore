@@ -237,6 +237,7 @@ workspace/
 
 # Audit logs
 *.jsonl
+*.jsonl.*
 logs/
 
 # Local MCP configuration

@@ -266,93 +266,83 @@ def register(
     if log_path is None:
         log_path = sandbox.root / ".tool_calls.jsonl"
 
-    if True:
+    @audited(
+        tool_name="git_status",
+        role=client_id,
+        log_path=log_path,
+        summarize=git_status_summary,
+    )
+    def git_status() -> str:
+        """Show concise Git status for the workspace."""
+        return git_status_impl(sandbox)
 
-        @audited(
-            tool_name="git_status",
-            role=client_id,
-            log_path=log_path,
-            summarize=git_status_summary,
-        )
-        def git_status() -> str:
-            """Show concise Git status for the workspace."""
-            return git_status_impl(sandbox)
+    mcp.add_tool(
+        git_status,
+        name="git_status",
+        description=GIT_STATUS_DESCRIPTION,
+        structured_output=False,
+    )
 
-        mcp.add_tool(
-            git_status,
-            name="git_status",
-            description=GIT_STATUS_DESCRIPTION,
-            structured_output=False,
-        )
-
-    if True:
-
-        @audited(
-            tool_name="git_diff",
-            role=client_id,
-            log_path=log_path,
-            summarize=git_diff_summary,
-        )
-        def git_diff(
-            path: Annotated[
-                str | None,
-                Field(
-                    description=(
-                        "Optional workspace-relative file or directory to "
-                        "diff. Omit to inspect all unstaged changes."
-                    ),
+    @audited(
+        tool_name="git_diff",
+        role=client_id,
+        log_path=log_path,
+        summarize=git_diff_summary,
+    )
+    def git_diff(
+        path: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Optional workspace-relative file or directory to "
+                    "diff. Omit to inspect all unstaged changes."
                 ),
-            ] = None,
-        ) -> str:
-            """Show bounded unstaged Git changes."""
-            return git_diff_impl(sandbox, path)
+            ),
+        ] = None,
+    ) -> str:
+        """Show bounded unstaged Git changes."""
+        return git_diff_impl(sandbox, path)
 
-        mcp.add_tool(
-            git_diff,
-            name="git_diff",
-            description=GIT_DIFF_DESCRIPTION,
-            structured_output=False,
-        )
+    mcp.add_tool(
+        git_diff,
+        name="git_diff",
+        description=GIT_DIFF_DESCRIPTION,
+        structured_output=False,
+    )
 
-    if True:
-
-        @audited(
-            tool_name="git_commit",
-            role=client_id,
-            log_path=log_path,
-            summarize=git_commit_summary,
-        )
-        def git_commit(
-            message: Annotated[
-                str,
-                Field(
-                    min_length=1,
-                    max_length=MAX_COMMIT_MESSAGE_CHARS,
-                    description="Short Git commit message.",
+    @audited(
+        tool_name="git_commit",
+        role=client_id,
+        log_path=log_path,
+        summarize=git_commit_summary,
+    )
+    def git_commit(
+        message: Annotated[
+            str,
+            Field(
+                min_length=1,
+                max_length=MAX_COMMIT_MESSAGE_CHARS,
+                description="Short Git commit message.",
+            ),
+        ],
+        paths: Annotated[
+            list[str],
+            Field(
+                min_length=1,
+                max_length=MAX_COMMIT_PATHS,
+                description=(
+                    "Explicit workspace-relative files to stage and commit. "
+                    "The entire workspace is never committed implicitly."
                 ),
-            ],
-            paths: Annotated[
-                list[str],
-                Field(
-                    min_length=1,
-                    max_length=MAX_COMMIT_PATHS,
-                    description=(
-                        "Explicit workspace-relative files to stage and commit. "
-                        "The entire workspace is never committed implicitly."
-                    ),
-                ),
-            ],
-        ) -> str:
-            """Create a commit from explicitly selected safe paths."""
-            return git_commit_impl(
-                sandbox,
-                message,
-                paths,
-            )
+            ),
+        ],
+    ) -> str:
+        """Create a commit from explicitly selected safe paths."""
+        return git_commit_impl(sandbox, message, paths)
 
-        mcp.add_tool(
-            git_commit,
-            name="git_commit",
-            description=GIT_COMMIT_DESCRIPTION,
-            structured_output=False,
-        )
+    mcp.add_tool(
+        git_commit,
+        name="git_commit",
+        description=GIT_COMMIT_DESCRIPTION,
+        structured_output=False,
+    )

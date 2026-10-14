@@ -1,12 +1,31 @@
 """Security-focused JSONL audit logging for MCP tool calls."""
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Any
 
 _AUDIT_LOCK = Lock()
+AUDIT_MAX_BYTES = 10 * 1024 * 1024
+AUDIT_BACKUP_COUNT = 5
+
+
+def _rotate_if_needed(log_path: Path, incoming_bytes: int) -> None:
+    """Rotate one process's JSONL log before it exceeds its size limit."""
+    if not log_path.exists() or log_path.stat().st_size + incoming_bytes <= AUDIT_MAX_BYTES:
+        return
+
+    oldest = log_path.with_name(f"{log_path.name}.{AUDIT_BACKUP_COUNT}")
+    oldest.unlink(missing_ok=True)
+
+    for index in range(AUDIT_BACKUP_COUNT - 1, 0, -1):
+        source = log_path.with_name(f"{log_path.name}.{index}")
+        if source.exists():
+            source.replace(log_path.with_name(f"{log_path.name}.{index + 1}"))
+
+    log_path.replace(log_path.with_name(f"{log_path.name}.1"))
 
 
 def _safe_value(value: Any) -> Any:
@@ -59,9 +78,11 @@ def audit_tool_call(
         separators=(",", ":"),
     )
 
+    encoded_line = (line + "\n").encode("utf-8")
+
     with _AUDIT_LOCK:
-        with log_path.open(
-            "a",
-            encoding="utf-8",
-        ) as handle:
-            handle.write(line + "\n")
+        _rotate_if_needed(log_path, len(encoded_line))
+        with log_path.open("ab") as handle:
+            handle.write(encoded_line)
+            handle.flush()
+            os.fsync(handle.fileno())
