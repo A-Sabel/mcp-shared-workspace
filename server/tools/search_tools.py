@@ -13,6 +13,7 @@ from server.audit_summaries import search_summary
 from server.audited_tool import audited
 from server.config import SEARCH_LIMIT, SNIPPET_CHARS
 from server.sandbox import Sandbox, SandboxError
+from server.tools.schema_utils import set_property_type
 from server.tools.file_tools import _glob_match, _walk
 
 MAX_SEARCH_FILE_BYTES = 5_000_000
@@ -198,7 +199,7 @@ def register(
             ),
         ] = ".",
         glob: Annotated[
-            str | None,
+            str,
             Field(
                 max_length=200,
                 description=(
@@ -243,3 +244,4 @@ def register(
         description=SEARCH_FILES_DESCRIPTION,
         structured_output=False,
     )
+    set_property_type(mcp, "search_files", "glob", "string")

@@ -242,3 +242,6 @@ logs/
 
 # Local MCP configuration
 .mcp.json
+
+
+benchmarks/

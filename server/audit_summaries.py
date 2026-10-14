@@ -89,12 +89,18 @@ def read_summary(
     kwargs: dict[str, Any],
 ) -> dict[str, Any]:
     ranges = kwargs.get("ranges")
+    path = kwargs.get("path")
 
     if ranges is None and args:
         ranges = args[0]
 
+    if isinstance(ranges, list):
+        return {"range_count": len(ranges)}
     return {
-        "range_count": len(ranges) if isinstance(ranges, list) else None,
+        "range_count": 1 if path else None,
+        "path": path,
+        "start_line": kwargs.get("start_line"),
+        "end_line": kwargs.get("end_line"),
     }
 
 

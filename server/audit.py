@@ -54,6 +54,7 @@ def audit_tool_call(
     client: str,
     success: bool,
     arguments: dict[str, Any] | None = None,
+    result: dict[str, Any] | None = None,
     error: str | None = None,
 ) -> None:
     """Append one sanitized tool-call record to the JSONL audit log."""
@@ -66,6 +67,9 @@ def audit_tool_call(
 
     if arguments:
         record["arguments"] = _safe_value(arguments)
+
+    if result:
+        record["result"] = _safe_value(result)
 
     if error:
         record["error"] = _safe_value(error)

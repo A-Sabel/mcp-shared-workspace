@@ -27,7 +27,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 MAX_PATH_LEN = 512
 
 # Directory names that are never accessible through any tool. The server
-# itself manages .git (via git tools) and .trash (via delete_file).
+# itself manages .git (via git tools) and .trash (via file tools).
 PROTECTED_DIRS = frozenset({".git", ".trash"})
 
 # File-name patterns (lower-case, matched case-insensitively) that are never
@@ -62,7 +62,7 @@ class Sandbox:
 
     @property
     def trash_dir(self) -> Path:
-        """Where delete_file moves files. Not reachable through resolve()."""
+        """Private trash storage managed by delete_file/restore_file."""
         return self.root / ".trash"
 
     def resolve(self, rel: str, *, for_write: bool = False) -> Path:

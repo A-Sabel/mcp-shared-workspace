@@ -1,6 +1,8 @@
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from server.security.token_verifier import WorkspaceTokenVerifier
+from mcp.server.auth.provider import TokenVerifier
+
+from server.security.request_identity import bind_access_token, reset_access_token
 
 
 class AuthenticationMiddleware:
@@ -10,10 +12,12 @@ class AuthenticationMiddleware:
         self,
         app: ASGIApp,
         *,
-        verifier: WorkspaceTokenVerifier,
+        verifier: TokenVerifier,
+        resource_metadata_url: str | None = None,
     ) -> None:
         self.app = app
         self.verifier = verifier
+        self.resource_metadata_url = resource_metadata_url
 
     async def __call__(
         self,
@@ -61,10 +65,13 @@ class AuthenticationMiddleware:
             await self._healthy(send)
             return
 
-        await self.app(scope, receive, send)
+        context_token = bind_access_token(access_token)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            reset_access_token(context_token)
 
-    @staticmethod
-    async def _unauthorized(send: Send, message: str) -> None:
+    async def _unauthorized(self, send: Send, message: str) -> None:
         body = message.encode("utf-8")
 
         await send(
@@ -74,7 +81,14 @@ class AuthenticationMiddleware:
                 "headers": [
                     (b"content-type", b"text/plain; charset=utf-8"),
                     (b"content-length", str(len(body)).encode("ascii")),
-                    (b"www-authenticate", b"Bearer"),
+                    (
+                        b"www-authenticate",
+                        (
+                            f'Bearer resource_metadata="{self.resource_metadata_url}"'.encode("ascii")
+                            if self.resource_metadata_url
+                            else b"Bearer"
+                        ),
+                    ),
                 ],
             }
         )

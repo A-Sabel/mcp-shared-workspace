@@ -4,11 +4,32 @@
 
 - One `MCP_TOKEN` is loaded from the environment and must be a non-placeholder
   value of at least 16 characters.
-- The authenticated client receives the complete MCP toolbox; tool choice is
-  an agent-planning concern, not an authorization mechanism.
+- The HTTP service supports OAuth authorization-code flow with PKCE and
+  dynamic client registration. The sign-in page accepts `MCP_TOKEN` as the
+  workspace owner credential; Claude receives a separate short-lived access
+  token and rotating refresh token. OAuth token values are stored as digests
+  in `OAUTH_DB_PATH` (default `logs/oauth.sqlite3`).
+- Keep the OAuth database private and persistent. Deleting it revokes existing
+  OAuth tokens and removes registered clients. Dynamic client registration is
+  publicly reachable because OAuth clients need it; registration does not grant
+  access until the workspace owner signs in.
+- The MCP server publishes the complete toolbox to the authenticated profile.
+  OAuth sign-in and the legacy `MCP_TOKEN` authenticate that same profile.
+- Authenticated clients can register arbitrary existing directories and switch
+  the shared sandbox to them. Treat workspace credentials as trusted with the
+  ability to expose and modify those registered projects.
+- The workspace registry stores absolute paths in `WORKSPACE_REGISTRY_PATH`
+  (default `logs/workspaces.json`); protect it with the same operating-system
+  permissions as the server configuration and audit logs.
 - Every tool resolves paths relative to `WORKSPACE_ROOT` and rejects traversal,
   absolute paths, control characters, protected names, and symlink escapes.
 - `.git`, `.trash`, `.env`, PEM files, and SSH key-like names are protected.
+- `delete_file` records a unique trash entry and original-path metadata;
+  `restore_file` validates the metadata and refuses destination conflicts.
+  `remove_directory` only removes empty directories and never recurses.
+- Permanent deletion is not exposed because the current MCP connection has no
+  trusted per-call approval channel. A model-provided confirmation parameter
+  would not prove that the workspace owner approved the deletion.
 - Writes are bounded; state updates are append-only and limited to the four
   handoff files.
 - Tool calls are recorded as structured JSONL with redacted argument summaries.
@@ -35,4 +56,5 @@
 - Free ngrok hostnames can change. Set `PUBLIC_HOSTNAME` and restart PM2 when
   the tunnel hostname changes.
 
-Never commit `.env`, tokens, audit logs, `.trash`, or Inspector session files.
+Never commit `.env`, tokens, the OAuth database, audit logs, `.trash`, or
+Inspector session files.

@@ -6,12 +6,14 @@ PM2, and ngrok.
 1. Start the service with `pm2 restart mcp-workspace` and confirm `pm2 status`.
 2. Open MCP Inspector at `https://<PUBLIC_HOSTNAME>/mcp` using the configured
    `MCP_TOKEN`.
-3. Initialize a session and show all ten tools.
+3. Initialize a session and show the 15 tools.
 4. Call `list_files` on `.` and `read_file` on `PROJECT_STATE.md`.
 5. Call `search_files` for `Current Phase` and `git_status` for the workspace.
 6. Call `append_state` on `CHECKPOINTS.md`.
 7. Call `write_file` on a disposable workspace file, read it back, then call
-   `delete_file` and confirm the file moves to `.trash`.
+   `delete_file`, record the returned `trash_path`, then call `restore_file` and
+   confirm it returns to its original location. Show that `remove_directory`
+   refuses a non-empty directory.
 8. Inspect the JSONL audit log and show that tool names, client, outcomes, and
    safe summaries were recorded without token values.
 9. End by reading `PROJECT_STATE.md` from the same session to demonstrate

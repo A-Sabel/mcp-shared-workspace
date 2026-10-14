@@ -19,6 +19,7 @@ from pydantic import Field
 
 from server.config import MAX_GIT_OUTPUT_CHARS
 from server.sandbox import Sandbox, SandboxError
+from server.tools.schema_utils import set_explicit_required, set_property_type
 
 MAX_COMMIT_MESSAGE_CHARS = 200
 MAX_COMMIT_PATHS = 50
@@ -243,9 +244,10 @@ GIT_STATUS_DESCRIPTION = (
 )
 
 GIT_DIFF_DESCRIPTION = (
-    "Show the current unstaged Git diff for the workspace or one safe "
-    "workspace-relative path. Use after editing to inspect what changed "
-    "before committing. Output is bounded."
+    "Show only the unstaged Git diff for the workspace or one safe "
+    "workspace-relative path. Staged changes are not included; use "
+    "git_status to see whether files are staged (it does not show their diff). "
+    "Use after editing to inspect unstaged changes before committing. Output is bounded."
 )
 
 GIT_COMMIT_DESCRIPTION = (
@@ -291,7 +293,7 @@ def register(
     )
     def git_diff(
         path: Annotated[
-            str | None,
+            str,
             Field(
                 description=(
                     "Optional workspace-relative file or directory to "
@@ -309,6 +311,8 @@ def register(
         description=GIT_DIFF_DESCRIPTION,
         structured_output=False,
     )
+    set_explicit_required(mcp, "git_diff")
+    set_property_type(mcp, "git_diff", "path", "string")
 
     @audited(
         tool_name="git_commit",

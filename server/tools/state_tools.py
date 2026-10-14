@@ -81,7 +81,10 @@ APPEND_STATE_DESCRIPTION = (
     "Append a concise handoff entry to one of the four shared state files: "
     "PROJECT_STATE.md, PLAN_LOG.md, CHECKPOINTS.md, or DECISIONS.md. "
     "Use this to record progress, plans, checkpoints, or decisions for "
-    "the next agent session. This tool never overwrites existing state."
+    "the next agent session. The named file must already exist. The tool adds "
+    "two blank lines, a '### <timestamp> UTC' heading in ISO-8601 form, and "
+    "the supplied entry, then a trailing newline. It only appends; it never "
+    "creates a missing file or overwrites existing content."
 )
 
 

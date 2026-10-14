@@ -35,6 +35,8 @@ class Settings:
     mcp_token: str
     log_path: Path
     public_hostname: str = "localhost"
+    oauth_db_path: Path | None = None
+    workspace_registry_path: Path | None = None
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
@@ -68,9 +70,21 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     if not log_path.is_absolute():
         log_path = PROJECT_ROOT / log_path
 
+    oauth_db_path = Path(env.get("OAUTH_DB_PATH", "logs/oauth.sqlite3")).expanduser()
+    if not oauth_db_path.is_absolute():
+        oauth_db_path = PROJECT_ROOT / oauth_db_path
+
+    workspace_registry_path = Path(
+        env.get("WORKSPACE_REGISTRY_PATH", "logs/workspaces.json")
+    ).expanduser()
+    if not workspace_registry_path.is_absolute():
+        workspace_registry_path = PROJECT_ROOT / workspace_registry_path
+
     return Settings(
         root,
         token,
         log_path.resolve(),
         public_hostname,
+        oauth_db_path.resolve(),
+        workspace_registry_path.resolve(),
     )

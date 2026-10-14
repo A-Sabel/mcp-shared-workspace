@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
+import json
 import os
 from collections.abc import Sequence
 from pathlib import Path
@@ -15,10 +16,17 @@ from server.audit_summaries import path_summary, read_summary
 from server.audited_tool import audited
 from server.config import LIST_LIMIT, MAX_READ_LINES, MAX_READ_RANGES
 from server.sandbox import Sandbox, SandboxError
+from server.tools.schema_utils import (
+    set_array_item_schema,
+    set_explicit_required,
+    set_property_type,
+)
 
 MAX_DEPTH = 10
 SCAN_CAP = 5000
 LINECOUNT_MAX_BYTES = 2_000_000
+MAX_READ_RESPONSE_BYTES = 64 * 1024
+MAX_READ_CONTENT_BYTES = 56 * 1024
 
 
 class ReadRange(BaseModel):
@@ -95,6 +103,34 @@ def _glob_match(relative_path: str, pattern: str) -> bool:
         )
         for pat in patterns
     )
+
+
+def _read_result_summary(result: object) -> dict[str, object]:
+    """Extract only non-content read coverage fields for audit telemetry."""
+    if not isinstance(result, str):
+        return {}
+    try:
+        payload = json.loads(result)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    ranges = payload.get("ranges") if isinstance(payload, dict) else None
+    if not isinstance(ranges, list):
+        return {}
+    coverage = []
+    for item in ranges:
+        if not isinstance(item, dict):
+            continue
+        coverage.append(
+            {
+                "path": item.get("path"),
+                "start_line": item.get("start_line"),
+                "end_line": item.get("end_line"),
+                "total_lines": item.get("total_lines"),
+                "has_more": item.get("has_more"),
+                "next_start_line": item.get("next_start_line"),
+            }
+        )
+    return {"read_ranges": coverage}
 
 
 def _walk(
@@ -246,9 +282,15 @@ def list_files_impl(
 
 
 READ_FILE_DESCRIPTION = (
-    "Read up to 5 inclusive line ranges from workspace files. Each range is "
-    "limited to 200 lines. Paths are workspace-relative; protected paths are "
-    "not accessible. Output uses compact one-based line numbers."
+    "Read a workspace-relative file in bounded line chunks. For one chunk, "
+    "provide path, start_line, and optionally end_line; the default is at most "
+    "200 lines. Or provide ranges for up to five chunks/files. The JSON result "
+    "includes total_lines, has_more, and next_start_line for every chunk. "
+    "When asked to read a complete file, continue from next_start_line until "
+    "has_more is false; do not treat the first chunk as the whole file. If a "
+    "task covers multiple files, inspect each requested file and all required "
+    "chunks, then report any file or range that could not be completed. "
+    "Responses are capped at 64 KiB; a byte-limited chunk can be continued."
 )
 
 
@@ -290,7 +332,7 @@ def register(
                 ),
             ] = ".",
             glob: Annotated[
-                str | None,
+                str,
                 Field(
                     max_length=200,
                     description=(
@@ -334,6 +376,8 @@ def register(
             description=LIST_FILES_DESCRIPTION,
             structured_output=False,
         )
+        set_explicit_required(mcp, "list_files")
+        set_property_type(mcp, "list_files", "glob", "string")
 
     if True:
 
@@ -342,23 +386,44 @@ def register(
             role=client_id,
             log_path=log_path,
             summarize=read_summary,
+            summarize_result=_read_result_summary,
         )
         def read_file(
+            path: Annotated[
+                str,
+                Field(
+                    description="Workspace-relative file path for a single chunk.",
+                ),
+            ] = None,
+            start_line: Annotated[
+                int,
+                Field(ge=1, description="One-based first line; defaults to 1."),
+            ] = 1,
+            end_line: Annotated[
+                int,
+                Field(ge=1, description="One-based inclusive last line; defaults to at most 200 lines."),
+            ] = None,
             ranges: Annotated[
                 list[ReadRange],
                 Field(
                     min_length=1,
                     max_length=MAX_READ_RANGES,
-                    description=(
-                        "One to five ranges; each has a workspace-relative "
-                        "path and inclusive one-based start/end line numbers."
-                    ),
+                    description="Optional list of up to five {path, start, end} chunks.",
                 ),
-            ],
+            ] = None,
         ) -> str:
-            """Read selected line ranges from sandboxed text files."""
+            """Read a bounded file chunk and report how to continue reading."""
             try:
-                return read_file_impl(sandbox, ranges)
+                if ranges is not None:
+                    if path is not None:
+                        raise ValueError("Provide either ranges or path, not both.")
+                    requested = ranges
+                elif path is not None:
+                    requested_end = end_line or min(start_line + MAX_READ_LINES - 1, 2**31 - 1)
+                    requested = [{"path": path, "start": start_line, "end": requested_end}]
+                else:
+                    raise ValueError("Provide path or ranges.")
+                return read_file_result_impl(sandbox, requested)
             except (SandboxError, ValueError) as exc:
                 raise ValueError(str(exc)) from None
 
@@ -367,6 +432,37 @@ def register(
             name="read_file",
             description=READ_FILE_DESCRIPTION,
             structured_output=False,
+        )
+        set_explicit_required(
+            mcp,
+            "read_file",
+            one_of=[
+                {
+                    "required": ["path"],
+                    "properties": {"path": {"type": "string"}},
+                },
+                {
+                    "required": ["ranges"],
+                    "properties": {"ranges": {"type": "array"}},
+                },
+            ],
+        )
+        set_property_type(mcp, "read_file", "path", "string")
+        set_property_type(mcp, "read_file", "end_line", "integer")
+        set_array_item_schema(
+            mcp,
+            "read_file",
+            "ranges",
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "path": {"type": "string", "description": "Workspace-relative file path."},
+                    "start": {"type": "integer", "minimum": 1},
+                    "end": {"type": "integer", "minimum": 1},
+                },
+                "required": ["path", "start", "end"],
+            },
         )
 
 
@@ -442,3 +538,80 @@ def read_file_impl(
         sections.append(f"{spec.path}:{spec.start}-{spec.end}\n{content}")
 
     return "\n\n".join(sections)
+
+
+def read_file_result_impl(
+    sandbox: Sandbox,
+    ranges: Sequence[ReadRange | dict[str, object]],
+) -> str:
+    """Read line ranges with completion metadata and a serialized-size cap."""
+    if not isinstance(ranges, list) or not ranges:
+        raise ValueError("At least one range is required.")
+    if len(ranges) > MAX_READ_RANGES:
+        raise ValueError(f"At most {MAX_READ_RANGES} ranges are allowed.")
+
+    results: list[dict[str, object]] = []
+    used_bytes = 0
+    for index, item in enumerate(ranges, start=1):
+        try:
+            spec = item if isinstance(item, ReadRange) else ReadRange.model_validate(item)
+        except Exception as exc:
+            raise ValueError(f"Invalid range {index}: {exc}") from None
+        if spec.end < spec.start:
+            raise ValueError(f"Range {index}: end must be greater than or equal to start.")
+        if spec.end - spec.start + 1 > MAX_READ_LINES:
+            raise ValueError(f"Range {index}: at most {MAX_READ_LINES} lines are allowed.")
+
+        file_path = sandbox.resolve(spec.path)
+        if not file_path.exists():
+            raise ValueError(f"Range {index}: file {spec.path!r} does not exist.")
+        if not file_path.is_file():
+            raise ValueError(f"Range {index}: path {spec.path!r} is not a file.")
+
+        lines: list[str] = []
+        returned_end = spec.start - 1
+        total_lines = 0
+        byte_limited = False
+        try:
+            with file_path.open("r", encoding="utf-8") as stream:
+                for line_number, line in enumerate(stream, start=1):
+                    total_lines = line_number
+                    if not spec.start <= line_number <= spec.end or byte_limited:
+                        continue
+                    rendered = f"{line_number}: {line.rstrip(chr(10)).rstrip(chr(13))}"
+                    escaped_bytes = len(json.dumps(rendered, ensure_ascii=False).encode("utf-8"))
+                    extra = escaped_bytes + (2 if lines else 0)
+                    if used_bytes + extra > MAX_READ_CONTENT_BYTES:
+                        if not lines and used_bytes == 0:
+                            raise ValueError(
+                                f"Range {index}: line {line_number} exceeds the read response size limit."
+                            )
+                        byte_limited = True
+                        continue
+                    lines.append(rendered)
+                    used_bytes += extra
+                    returned_end = line_number
+        except UnicodeDecodeError:
+            raise ValueError(f"Range {index}: file {spec.path!r} is not valid UTF-8 text.") from None
+        except OSError as exc:
+            detail = exc.strerror or "I/O error"
+            raise ValueError(f"Range {index}: cannot read file {spec.path!r}: {detail}.") from None
+
+        has_more = returned_end < total_lines and total_lines >= spec.start
+        results.append(
+            {
+                "path": spec.path,
+                "start_line": spec.start,
+                "end_line": returned_end if returned_end >= spec.start else None,
+                "requested_end_line": spec.end,
+                "total_lines": total_lines,
+                "has_more": has_more,
+                "next_start_line": returned_end + 1 if has_more else None,
+                "content": "\n".join(lines) if lines else "(no lines in requested range)",
+            }
+        )
+
+    result = json.dumps({"ranges": results}, ensure_ascii=False)
+    if len(result.encode("utf-8")) > MAX_READ_RESPONSE_BYTES:
+        raise ValueError("Read response metadata exceeds the response size limit; request fewer ranges.")
+    return result
