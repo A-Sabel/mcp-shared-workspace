@@ -50,13 +50,7 @@ def append_state_impl(
 
     path = sandbox.resolve(file, for_write=True)
 
-    if not path.exists():
-        raise ValueError(
-            f"State file {file!r} does not exist. "
-            "Create the required handoff files before appending state."
-        )
-
-    if not path.is_file():
+    if path.exists() and not path.is_file():
         raise ValueError(f"State path {file!r} is not a file.")
 
     # The filename is restricted above, but keep this check explicit.
@@ -81,10 +75,11 @@ APPEND_STATE_DESCRIPTION = (
     "Append a concise handoff entry to one of the four shared state files: "
     "PROJECT_STATE.md, PLAN_LOG.md, CHECKPOINTS.md, or DECISIONS.md. "
     "Use this to record progress, plans, checkpoints, or decisions for "
-    "the next agent session. The named file must already exist. The tool adds "
+    "the next agent session. If the named approved file is missing, the tool "
+    "creates it in the workspace. The tool adds "
     "two blank lines, a '### <timestamp> UTC' heading in ISO-8601 form, and "
     "the supplied entry, then a trailing newline. It only appends; it never "
-    "creates a missing file or overwrites existing content."
+    "overwrites existing content."
 )
 
 

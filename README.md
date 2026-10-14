@@ -18,23 +18,23 @@ The known hard-link and TOCTOU limitations are recorded in [docs/SECURITY.md](do
 
 The MCP server exposes 15 tools to the authenticated workspace profile.
 
-| Tool           | What it can do                                        |
-| -------------- | ----------------------------------------------------- |
-| `list_files`   | Browse files and folders in the workspace.            |
-| `read_file`    | Read bounded chunks with line counts and continuation metadata. |
-| `search_files` | Search workspace files by text or regular expression. |
-| `append_state` | Add a handoff entry to the shared state files.        |
-| `git_status`   | Show the workspace Git status.                        |
-| `git_diff`     | Inspect bounded unstaged Git changes.                 |
-| `write_file`   | Create or replace a workspace text file.              |
-| `str_replace`  | Make an exact, targeted text replacement.             |
-| `delete_file`  | Soft-delete a file by moving it to `.trash`.          |
-| `restore_file` | Restore a soft-deleted file without overwriting conflicts. |
-| `remove_directory` | Remove an empty directory; non-empty directories are refused. |
-| `git_commit`   | Commit explicitly selected safe workspace paths.      |
-| `list_workspaces` | List registered project workspaces and the active one. |
-| `register_workspace` | Register an existing project directory by name. |
-| `switch_workspace` | Make a registered project the active workspace. |
+| Tool                 | What it can do                                                  |
+| -------------------- | --------------------------------------------------------------- |
+| `list_files`         | Browse files and folders in the workspace.                      |
+| `read_file`          | Read bounded chunks with line counts and continuation metadata. |
+| `search_files`       | Search workspace files by text or regular expression.           |
+| `append_state`       | Add a handoff entry to the shared state files.                  |
+| `git_status`         | Show the workspace Git status.                                  |
+| `git_diff`           | Inspect bounded unstaged Git changes.                           |
+| `write_file`         | Create or replace a workspace text file.                        |
+| `str_replace`        | Make an exact, targeted text replacement.                       |
+| `delete_file`        | Soft-delete a file by moving it to `.trash`.                    |
+| `restore_file`       | Restore a soft-deleted file without overwriting conflicts.      |
+| `remove_directory`   | Remove an empty directory; non-empty directories are refused.   |
+| `git_commit`         | Commit explicitly selected safe workspace paths.                |
+| `list_workspaces`    | List registered project workspaces and the active one.          |
+| `register_workspace` | Register an existing project directory by name.                 |
+| `switch_workspace`   | Make a registered project the active workspace.                 |
 
 The AI chooses the tools needed for each task. The server still validates every
 request before it reaches the workspace.
@@ -49,7 +49,7 @@ that cannot fit in a response are reported as an error.
 Successful tool calls add content-free output byte and character counts to the
 JSONL audit log. `read_file` calls also record line-range and continuation
 metadata. The telemetry excludes returned file contents and measures server
-output size, not Claude token usage. For a paired baseline/candidate evaluation
+output size, not model token usage. For a paired baseline/candidate evaluation
 using actual client token counts and task pass/completeness ratings, follow
 [benchmarks/README.md](benchmarks/README.md). The scripts under `scripts/`
 summarize audit telemetry and benchmark results.
@@ -118,6 +118,10 @@ server and tunnel with that project selected. The **Usage** tab summarizes
 tool audit counts and read coverage, plus any paired token benchmark results
 entered in `benchmarks/results.csv`. The registry is stored in
 `logs/workspaces.json`.
+
+For quicker startup, create a Windows shortcut that runs
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<repo>\deployment\windows\workspace-control.ps1"`
+and pin it to your desktop or taskbar.
 
 Permanent deletion is not exposed until a trusted approval flow is available.
 `delete_file` moves files into uniquely named `.trash` entries with metadata;

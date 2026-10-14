@@ -65,15 +65,15 @@ def search_files_impl(
         candidates = [
             candidate
             for candidate in candidates
-            if _glob_match(
-                (
-                    candidate.relative_to(base).as_posix()
-                    if base.is_dir()
-                    else candidate.name
-                ),
-                glob,
+            if (
+                _glob_match(candidate.name, glob)
+                or _glob_match(sandbox.relative(candidate), glob)
             )
         ]
+        if not candidates:
+            return f"No files matched glob {glob!r} under {path!r}."
+
+    glob_candidate_count = len(candidates) if glob else None
 
     pattern = None
 
@@ -137,6 +137,11 @@ def search_files_impl(
             continue
 
     if not results:
+        if glob_candidate_count is not None:
+            return (
+                f"No content matches for query in the {glob_candidate_count} "
+                f"file(s) matched by glob {glob!r}."
+            )
         return "No matches."
 
     output = [f"Found {len(results)} " f"match{'es' if len(results) != 1 else ''}:"]
@@ -203,7 +208,9 @@ def register(
             Field(
                 max_length=200,
                 description=(
-                    "Optional filename or relative-path glob, " "for example '*.py'."
+                    "Optional filename or workspace-relative path glob, "
+                    "for example 'hello_world.py', '*.py', or 'src/*.py'. "
+                    "Matching files must also contain query."
                 ),
             ),
         ] = None,

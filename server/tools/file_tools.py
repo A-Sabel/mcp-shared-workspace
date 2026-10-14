@@ -24,6 +24,19 @@ from server.tools.schema_utils import (
 
 MAX_DEPTH = 10
 SCAN_CAP = 5000
+SKIP_SCAN_DIRS = {
+    ".venv",
+    "venv",
+    "env",
+    ".tox",
+    ".nox",
+    "node_modules",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".cache",
+}
 LINECOUNT_MAX_BYTES = 2_000_000
 MAX_READ_RESPONSE_BYTES = 64 * 1024
 MAX_READ_CONTENT_BYTES = 56 * 1024
@@ -140,47 +153,48 @@ def _walk(
     max_depth: int,
     output: list[tuple[Path, bool]],
 ) -> None:
-    """Walk directories while skipping protected and unsafe entries."""
-    try:
-        with os.scandir(directory) as entries:
-            entries = sorted(
-                entries,
-                key=lambda entry: (
-                    not entry.is_dir(follow_symlinks=False),
-                    entry.name.lower(),
-                ),
-            )
-    except OSError:
-        return
+    """Walk shallow-first so root files survive the bounded scan."""
+    pending = [(directory, depth)]
 
-    for entry in entries:
-        if len(output) >= SCAN_CAP:
-            return
-
-        # Do not follow symlinks during directory enumeration.
-        if entry.is_symlink():
+    while pending and len(output) < SCAN_CAP:
+        current, current_depth = pending.pop(0)
+        try:
+            with os.scandir(current) as entries:
+                entries = sorted(
+                    entries,
+                    key=lambda entry: (
+                        entry.is_dir(follow_symlinks=False),
+                        entry.name.lower(),
+                    ),
+                )
+        except OSError:
             continue
 
-        is_dir = entry.is_dir(follow_symlinks=False)
+        child_directories: list[Path] = []
+        for entry in entries:
+            if len(output) >= SCAN_CAP:
+                break
 
-        if not is_dir and not entry.is_file(follow_symlinks=False):
-            continue
+            # Do not follow symlinks during directory enumeration.
+            if entry.is_symlink():
+                continue
 
-        path = Path(entry.path)
+            is_dir = entry.is_dir(follow_symlinks=False)
+            if not is_dir and not entry.is_file(follow_symlinks=False):
+                continue
 
-        if sandbox.is_protected(path):
-            continue
+            path = Path(entry.path)
+            if sandbox.is_protected(path):
+                continue
 
-        output.append((path, is_dir))
+            if is_dir and entry.name.lower() in SKIP_SCAN_DIRS:
+                continue
 
-        if is_dir and depth < max_depth:
-            _walk(
-                sandbox,
-                path,
-                depth + 1,
-                max_depth,
-                output,
-            )
+            output.append((path, is_dir))
+            if is_dir and current_depth < max_depth:
+                child_directories.append(path)
+
+        pending.extend((path, current_depth + 1) for path in child_directories)
 
 
 def list_files_impl(

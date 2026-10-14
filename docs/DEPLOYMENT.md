@@ -31,8 +31,8 @@ windows. Before starting, it removes the previous `mcp-workspace` PM2 entry.
 Pause stops the public tunnel and MCP service while leaving the control app open. Exit, or
 the window close button, stops both and closes the app. The app shows the MCP
 endpoint and activity; startup messages are recorded in `logs/launcher.log`
-and Python output in `logs/mcp-server.log`. The computer must remain awake and online while Claude
-needs access. The standalone PM2 launcher remains available at
+and Python output in `logs/mcp-server.log`. The computer must remain awake and
+online while an MCP client needs access. The standalone PM2 launcher remains available at
 `deployment\windows\start-mcp-hidden.vbs`. From PowerShell, run the combined
 launcher with the windowless Windows Script Host explicitly:
 
@@ -80,21 +80,21 @@ MCP Inspector against `https://<PUBLIC_HOSTNAME>/mcp` with the configured
 `MCP_TOKEN`; initialization should succeed and expose the workspace tools. At
 this Inspector flow, the legacy `MCP_TOKEN` grants the same workspace access.
 Supply it through Inspector's secret/header UI, not a URL or saved command.
-For Claude's OAuth sign-in flow below, enter the workspace access key to
+For an MCP client's OAuth sign-in flow below, enter the workspace access key to
 authorize the profile.
 
-## Connect Claude using OAuth
+## Connect an MCP client using OAuth
 
 The HTTP server publishes OAuth metadata and a protected-resource document.
-In Claude, add a custom connector using `https://<PUBLIC_HOSTNAME>/mcp` and
-choose **Sign in now**, then choose **Register automatically** for the OAuth
-client. Claude should open the workspace sign-in page. Enter the configured
-`MCP_TOKEN` as the workspace access key to authorize it. The
-server then issues Claude its own expiring OAuth tokens. Keep the ngrok tunnel
-running, and keep `logs/oauth.sqlite3` private and persistent; deleting that
+In an MCP client that supports remote Streamable HTTP servers and OAuth, add
+`https://<PUBLIC_HOSTNAME>/mcp` and choose its OAuth sign-in or automatic client
+registration option. The client should open the workspace sign-in page. Enter
+the configured `MCP_TOKEN` as the workspace access key to authorize it. The
+server then issues that client its own expiring OAuth tokens. Keep the ngrok
+tunnel running, and keep `logs/oauth.sqlite3` private and persistent; deleting that
 database removes OAuth registrations and revokes issued sessions. If the
 hostname changes, update `PUBLIC_HOSTNAME`, restart PM2, then update the
-connector URL and sign in again.
+MCP server URL and sign in again.
 
 ## Audit log operations
 

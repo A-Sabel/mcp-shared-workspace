@@ -6,8 +6,8 @@
   value of at least 16 characters.
 - The HTTP service supports OAuth authorization-code flow with PKCE and
   dynamic client registration. The sign-in page accepts `MCP_TOKEN` as the
-  workspace owner credential; Claude receives a separate short-lived access
-  token and rotating refresh token. OAuth token values are stored as digests
+  workspace owner credential; each registered MCP client receives a separate
+  short-lived access token and rotating refresh token. OAuth token values are stored as digests
   in `OAUTH_DB_PATH` (default `logs/oauth.sqlite3`).
 - Keep the OAuth database private and persistent. Deleting it revokes existing
   OAuth tokens and removes registered clients. Dynamic client registration is

@@ -77,11 +77,11 @@ def build_http_app(settings: Settings) -> ASGIApp:
                 """<!doctype html><html><head><meta name=viewport content='width=device-width'>
                 <title>Workspace sign in</title></head><body style='font:16px sans-serif;max-width:32rem;margin:4rem auto'>
                 <h1>Sign in to MCP Shared Workspace</h1>
-                <p>Enter the workspace access key to authorize Claude.</p>
+                <p>Enter the workspace access key to authorize this MCP client.</p>
                 <form method=post><input type=hidden name=tx value='""" + tx + """'>
                 <label>Workspace access key<br><input type=password name=access_key required autocomplete=current-password
                 style='width:100%;padding:.7rem;margin:.5rem 0 1rem'></label>
-                <button style='padding:.7rem 1.2rem'>Authorize Claude</button></form></body></html>"""
+                <button style='padding:.7rem 1.2rem'>Authorize MCP client</button></form></body></html>"""
             )
         form = await request.form()
         form_tx = str(form.get("tx", ""))
@@ -94,22 +94,27 @@ def build_http_app(settings: Settings) -> ASGIApp:
                 "Invalid access key or expired sign-in request. Close this page and try connecting again.",
                 status_code=401,
             )
-        return RedirectResponse(callback, status_code=303)
+        # Gemini's account-linking callback currently fails to process the
+        # post-login redirect when it is sent as 303. Use 302 so the browser
+        # follows the authorization-code callback as a GET.
+        return RedirectResponse(callback, status_code=302)
 
     oauth_routes = create_auth_routes(
         provider,
         issuer_url,
         client_registration_options=ClientRegistrationOptions(
             enabled=True,
-            valid_scopes=["workspace"],
-            default_scopes=["workspace"],
+            valid_scopes=["mcp", "workspace"],
+            # Gemini requests both scopes during authorization. Register new
+            # clients for both so the SDK's per-client scope check accepts it.
+            default_scopes=["mcp", "workspace"],
         ),
         revocation_options=RevocationOptions(enabled=True),
     )
     protected_resource_routes = create_protected_resource_routes(
         AnyHttpUrl(resource),
         [issuer_url],
-        scopes_supported=["workspace"],
+        scopes_supported=["mcp", "workspace"],
         resource_name="MCP Shared Workspace",
     )
 

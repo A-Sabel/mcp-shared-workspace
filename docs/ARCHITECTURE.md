@@ -22,7 +22,8 @@ flowchart TD
 `/mcp`. The HTTP app publishes OAuth protected-resource and authorization
 metadata, supports dynamic client registration and authorization-code PKCE,
 and serves a sign-in form. The owner enters `MCP_TOKEN` there; the provider
-issues Claude a separate one-hour access token and a rotating refresh token.
+issues the registered MCP client a separate one-hour access token and a
+rotating refresh token.
 The OAuth SQLite database stores client registrations and token digests across
 restarts. Owner sign-in authenticates one profile, and the HTTP middleware
 accepts either its OAuth access tokens or the existing `MCP_TOKEN` for legacy

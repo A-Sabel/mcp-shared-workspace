@@ -511,7 +511,7 @@ function Stop-Workspace([bool]$Exiting = $false) {
     if ($Exiting) {
         # PM2 cleanup is deliberately NOT done here; it only belongs to Start's migration step.
         Add-Activity 'Workspace stopped; control app exiting.'
-    } else { Add-Activity 'Workspace paused. Press Start to reconnect Claude.' }
+    } else { Add-Activity 'Workspace paused. Press Start to reconnect your MCP client.' }
     Set-Status $false $(if ($Exiting) { 'Stopped' } else { 'Paused' })
 }
 
@@ -568,7 +568,7 @@ function Update-UsageView {
         }
     }
 
-    $script:usageTotals.Text = "Audit: $recordCount calls across current and rotated logs; $badCount malformed lines. Server output bytes are not Claude token counts."
+    $script:usageTotals.Text = "Audit: $recordCount calls across current and rotated logs; $badCount malformed lines. Server output bytes are not model token counts."
     $script:usageGrid.Rows.Clear()
     foreach ($name in @($totals.Keys | Sort-Object)) {
         $item = $totals[$name]
@@ -639,7 +639,7 @@ $script:status.ForeColor = [System.Drawing.Color]::FromArgb(235, 185, 85)
 $workspaceTab.Controls.Add($script:status)
 
 $script:url = New-Object System.Windows.Forms.Label
-$script:url.Text = 'Claude connector URL: loading...'
+$script:url.Text = 'MCP server URL: loading...'
 $script:url.Location = New-Object System.Drawing.Point(24, 88)
 $script:url.Size = New-Object System.Drawing.Size(640, 22)
 $script:url.ForeColor = [System.Drawing.Color]::FromArgb(135, 190, 245)
@@ -808,7 +808,7 @@ $script:benchmarkSummary.ForeColor = [System.Drawing.Color]::FromArgb(190, 200, 
 $usageTab.Controls.Add($script:benchmarkSummary)
 
 $benchmarkHint = New-Object System.Windows.Forms.Label
-$benchmarkHint.Text = 'Enter actual Claude input/output token counts and pass/completeness ratings in benchmarks/results.csv, then refresh.'
+$benchmarkHint.Text = 'Enter actual model input/output token counts and pass/completeness ratings in benchmarks/results.csv, then refresh.'
 $benchmarkHint.Location = New-Object System.Drawing.Point(22, 540)
 $benchmarkHint.Size = New-Object System.Drawing.Size(830, 42)
 $benchmarkHint.Anchor = 'Bottom,Left,Right'
@@ -847,7 +847,7 @@ $script:statusTimer.Add_Tick({
             if (-not $script:tunnelOnline) { Add-Activity ('Tunnel connected: ' + $expectedUrl) }
             $script:tunnelOnline = $true
             Set-Status $true ('Online - ' + $expectedUrl)
-            $script:url.Text = 'Claude connector URL: ' + $expectedUrl + '/mcp'
+            $script:url.Text = 'MCP server URL: ' + $expectedUrl + '/mcp'
         } else {
             $script:tunnelOnline = $false
             $script:status.Text = 'Waiting for ngrok tunnel...'
@@ -885,7 +885,7 @@ try {
     Get-Settings
     Import-WorkspaceRegistry
     Update-UsageView
-    $script:url.Text = 'Claude connector URL: https://' + $script:hostname + '/mcp'
+    $script:url.Text = 'MCP server URL: https://' + $script:hostname + '/mcp'
     Add-Activity 'Ready. Select or register a project, then Start. Switching while running restarts the server and tunnel.'
 } catch { Add-Activity "CONFIG ERROR: $($_.Exception.Message)" }
 

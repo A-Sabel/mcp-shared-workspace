@@ -22,8 +22,8 @@ echo  ngrok status:  http://127.0.0.1:4040
 echo.
 echo  PM2 keeps the MCP server running in the background.
 echo  This minimized window owns the ngrok tunnel.
-echo  Minimize this window to keep Claude connected.
-echo  Closing it stops the tunnel and disconnects Claude.
+echo  Minimize this window to keep your MCP client connected.
+echo  Closing it stops the tunnel and disconnects the client.
 echo.
 echo  ngrok output follows. Restore this window to inspect status.
 echo ============================================================
