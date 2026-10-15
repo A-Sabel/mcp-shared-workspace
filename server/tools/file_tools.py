@@ -298,10 +298,18 @@ def list_files_impl(
 READ_FILE_DESCRIPTION = (
     "Read a workspace-relative file in bounded line chunks. For one chunk, "
     "provide path, start_line, and optionally end_line; the default is at most "
-    "200 lines. Or provide ranges for up to five chunks/files. The JSON result "
-    "includes total_lines, has_more, and next_start_line for every chunk. "
-    "When asked to read a complete file, continue from next_start_line until "
-    "has_more is false; do not treat the first chunk as the whole file. If a "
+    "200 lines. When you already know more context is needed, use ranges to "
+    "request up to five chunks/files in one call. For sequential chunks of the "
+    "same file, set each range's start to the prior chunk's next_start_line. "
+    "By default the server stops after the requested range and one-line "
+    "lookahead; total_lines is null unless EOF was reached naturally. Set "
+    "count_total_lines=true to scan through EOF for an exact total. Each result "
+    "includes has_more and next_start_line for continuation. "
+    "Use your judgment to decide whether the returned content is enough for "
+    "the task; has_more only indicates that unread content remains. If more "
+    "context is needed, call read_file again with start_line=next_start_line, "
+    "or batch up to five known-needed chunks with ranges. "
+    "For complete-file tasks, continue until has_more is false. If a "
     "task covers multiple files, inspect each requested file and all required "
     "chunks, then report any file or range that could not be completed. "
     "Responses are capped at 64 KiB; a byte-limited chunk can be continued."
@@ -422,9 +430,23 @@ def register(
                 Field(
                     min_length=1,
                     max_length=MAX_READ_RANGES,
-                    description="Optional list of up to five {path, start, end} chunks.",
+                    description=(
+                        "Optional list of up to five {path, start, end} chunks. "
+                        "Use multiple ranges to batch chunks you already know "
+                        "are needed; for sequential chunks, continue from each "
+                        "prior result's next_start_line."
+                    ),
                 ),
             ] = None,
+            count_total_lines: Annotated[
+                bool,
+                Field(
+                    description=(
+                        "Whether to scan through EOF to return an exact "
+                        "total_lines value. Defaults to false for targeted reads."
+                    ),
+                ),
+            ] = False,
         ) -> str:
             """Read a bounded file chunk and report how to continue reading."""
             try:
@@ -437,7 +459,11 @@ def register(
                     requested = [{"path": path, "start": start_line, "end": requested_end}]
                 else:
                     raise ValueError("Provide path or ranges.")
-                return read_file_result_impl(sandbox, requested)
+                return read_file_result_impl(
+                    sandbox,
+                    requested,
+                    count_total_lines=count_total_lines,
+                )
             except (SandboxError, ValueError) as exc:
                 raise ValueError(str(exc)) from None
 
@@ -463,6 +489,7 @@ def register(
         )
         set_property_type(mcp, "read_file", "path", "string")
         set_property_type(mcp, "read_file", "end_line", "integer")
+        set_property_type(mcp, "read_file", "count_total_lines", "boolean")
         set_array_item_schema(
             mcp,
             "read_file",
@@ -557,8 +584,10 @@ def read_file_impl(
 def read_file_result_impl(
     sandbox: Sandbox,
     ranges: Sequence[ReadRange | dict[str, object]],
+    *,
+    count_total_lines: bool = False,
 ) -> str:
-    """Read line ranges with completion metadata and a serialized-size cap."""
+    """Read bounded ranges, optionally scanning to EOF for exact line totals."""
     if not isinstance(ranges, list) or not ranges:
         raise ValueError("At least one range is required.")
     if len(ranges) > MAX_READ_RANGES:
@@ -584,13 +613,20 @@ def read_file_result_impl(
 
         lines: list[str] = []
         returned_end = spec.start - 1
-        total_lines = 0
-        byte_limited = False
+        total_lines: int | None = None
+        line_count = 0
+        has_more = False
         try:
             with file_path.open("r", encoding="utf-8") as stream:
                 for line_number, line in enumerate(stream, start=1):
-                    total_lines = line_number
-                    if not spec.start <= line_number <= spec.end or byte_limited:
+                    line_count = line_number
+                    if line_number < spec.start:
+                        continue
+                    if line_number > spec.end:
+                        # One-line lookahead proves there is unread content.
+                        has_more = True
+                        if not count_total_lines:
+                            break
                         continue
                     rendered = f"{line_number}: {line.rstrip(chr(10)).rstrip(chr(13))}"
                     escaped_bytes = len(json.dumps(rendered, ensure_ascii=False).encode("utf-8"))
@@ -600,18 +636,23 @@ def read_file_result_impl(
                             raise ValueError(
                                 f"Range {index}: line {line_number} exceeds the read response size limit."
                             )
-                        byte_limited = True
-                        continue
-                    lines.append(rendered)
-                    used_bytes += extra
-                    returned_end = line_number
+                        has_more = True
+                        if not count_total_lines:
+                            break
+                    else:
+                        lines.append(rendered)
+                        used_bytes += extra
+                        returned_end = line_number
+                else:
+                    total_lines = line_count
         except UnicodeDecodeError:
             raise ValueError(f"Range {index}: file {spec.path!r} is not valid UTF-8 text.") from None
         except OSError as exc:
             detail = exc.strerror or "I/O error"
             raise ValueError(f"Range {index}: cannot read file {spec.path!r}: {detail}.") from None
 
-        has_more = returned_end < total_lines and total_lines >= spec.start
+        if count_total_lines:
+            has_more = returned_end < (total_lines or 0) and (total_lines or 0) >= spec.start
         results.append(
             {
                 "path": spec.path,

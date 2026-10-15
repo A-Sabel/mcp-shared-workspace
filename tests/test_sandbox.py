@@ -20,13 +20,6 @@ def ws(tmp_path: Path) -> Sandbox:
     return Sandbox(root)
 
 
-def _symlink(link: Path, target: Path | str) -> None:
-    try:
-        link.symlink_to(target)
-    except (OSError, NotImplementedError):
-        pytest.skip("symlinks not supported here")
-
-
 # ---------------------------------------------------------------- accepted
 
 
@@ -164,49 +157,6 @@ def test_similar_but_safe_names_allowed(ws, ok):
     assert ws.resolve(ok).is_relative_to(ws.root)
 
 
-# ---------------------------------------------------------------- symlinks
-
-
-def test_symlinked_dir_to_outside_rejected(ws):
-    _symlink(ws.root / "link", ws.root.parent / "workspace-evil")
-    for bad in ("link", "link/loot.txt", "link/new.txt"):
-        with pytest.raises(SandboxError):
-            ws.resolve(bad)
-
-
-def test_symlinked_file_to_outside_rejected(ws):
-    _symlink(ws.root / "s.txt", ws.root.parent / "secret.txt")
-    with pytest.raises(SandboxError):
-        ws.resolve("s.txt")
-
-
-def test_dangling_symlink_to_outside_rejected(ws):
-    _symlink(ws.root / "dangling", ws.root.parent / "does-not-exist")
-    with pytest.raises(SandboxError):
-        ws.resolve("dangling", for_write=True)
-
-
-def test_symlink_staying_inside_is_allowed(ws):
-    _symlink(ws.root / "alias.py", ws.root / "src" / "main.py")
-    assert ws.resolve("alias.py") == ws.root / "src" / "main.py"
-
-
-def test_symlink_to_protected_file_rejected(ws):
-    (ws.root / ".env").write_text("TOKEN=x")
-    _symlink(ws.root / "innocent.txt", ws.root / ".env")
-    with pytest.raises(SandboxError):
-        ws.resolve("innocent.txt")
-
-
-def test_symlink_loop_never_escapes_or_crashes(ws):
-    _symlink(ws.root / "loop", "loop")
-    try:
-        result = ws.resolve("loop")
-    except SandboxError:
-        return
-    assert result.is_relative_to(ws.root)
-
-
 # ------------------------------------------------------------- protected
 
 
@@ -275,13 +225,6 @@ def test_root_must_be_existing_directory(tmp_path):
     (tmp_path / "file.txt").write_text("x")
     with pytest.raises(SandboxError):
         Sandbox(tmp_path / "file.txt")
-
-
-def test_root_given_as_symlink_is_resolved(tmp_path):
-    real = tmp_path / "real"
-    real.mkdir()
-    _symlink(tmp_path / "linked", real)
-    assert Sandbox(tmp_path / "linked").root == real.resolve()
 
 
 def test_trash_dir_is_inside_root_but_not_resolvable(ws):

@@ -1,8 +1,12 @@
+import logging
+
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from mcp.server.auth.provider import TokenVerifier
 
 from server.security.request_identity import bind_access_token, reset_access_token
+
+logger = logging.getLogger(__name__)
 
 
 class AuthenticationMiddleware:
@@ -28,6 +32,17 @@ class AuthenticationMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+
+        if scope.get("path") == "/v1/usage/current":
+            headers = dict(scope.get("headers", []))
+            user_agent = headers.get(b"user-agent", b"").decode("latin-1")[:200]
+            client = scope.get("client")
+            client_host = client[0] if client else "unknown"
+            logger.warning(
+                "Request to unsupported /v1/usage/current from %s; User-Agent=%r",
+                client_host,
+                user_agent or "(missing)",
+            )
 
         authorization = None
 

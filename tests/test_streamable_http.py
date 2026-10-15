@@ -247,7 +247,12 @@ def test_authenticated_client_sees_all_tools(tmp_path: Path):
             "write_file",
             "str_replace",
             "delete_file",
+            "restore_file",
+            "remove_directory",
             "git_commit",
+            "list_workspaces",
+            "register_workspace",
+            "switch_workspace",
         }
 
         assert names == expected_tools

@@ -21,7 +21,7 @@ The MCP server exposes 15 tools to the authenticated workspace profile.
 | Tool                 | What it can do                                                  |
 | -------------------- | --------------------------------------------------------------- |
 | `list_files`         | Browse files and folders in the workspace.                      |
-| `read_file`          | Read bounded chunks with line counts and continuation metadata. |
+| `read_file`          | Read bounded chunks; optionally count all file lines.            |
 | `search_files`       | Search workspace files by text or regular expression.           |
 | `append_state`       | Add a handoff entry to the shared state files.                  |
 | `git_status`         | Show the workspace Git status.                                  |
@@ -39,20 +39,25 @@ The MCP server exposes 15 tools to the authenticated workspace profile.
 The AI chooses the tools needed for each task. The server still validates every
 request before it reaches the workspace.
 
-For complete-file requests, `read_file` reports `total_lines`, `has_more`, and
-`next_start_line`. Continue from that line until `has_more` is false. Reads are
-limited to 200 lines per chunk and 64 KiB per response; unusually long lines
-that cannot fit in a response are reported as an error.
+`read_file` returns `total_lines`, `has_more`, and `next_start_line` so the AI can
+decide whether it has enough information for the task. If it needs more, it can
+request the next chunk from `next_start_line`, or batch up to five known-needed
+chunks with `ranges`. For complete-file requests, it should continue until
+`has_more` is false. By default, targeted reads stop after the requested range
+and one-line lookahead; `total_lines` is `null` when EOF was not reached. Set
+`count_total_lines=true` to scan through EOF for an exact total. Each call is
+limited to 200 lines per range and 64 KiB; an unusually long line that cannot
+fit in a response is an error.
 
 ## Measure Tool And Token Efficiency
 
 Successful tool calls add content-free output byte and character counts to the
 JSONL audit log. `read_file` calls also record line-range and continuation
 metadata. The telemetry excludes returned file contents and measures server
-output size, not model token usage. For a paired baseline/candidate evaluation
-using actual client token counts and task pass/completeness ratings, follow
-[benchmarks/README.md](benchmarks/README.md). The scripts under `scripts/`
-summarize audit telemetry and benchmark results.
+output size, not model token usage. `scripts/report_tool_usage.py` summarizes
+audit telemetry. `scripts/summarize_token_benchmark.py` summarizes a paired
+baseline/candidate CSV when you provide actual client token counts and
+task pass/completeness ratings; benchmark data is local and git-ignored.
 
 ## Setup And Replication
 
@@ -78,21 +83,25 @@ Generate a token with:
 python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
-Seed and initialize the external workspace:
+Create and initialize the external workspace. Copy or create your project files
+in this directory before connecting clients:
 
 ```powershell
 New-Item -ItemType Directory ..\mcp-workspace -Force
-Copy-Item examples\workspace\* ..\mcp-workspace -Recurse -Force
-Set-Location ..\mcp-workspace
+Push-Location ..\mcp-workspace
 git init
-git add -A
-git commit -m "chore: seed workspace"
+Pop-Location
 ```
 
-Start a local HTTP instance and run the tests:
+Start the local HTTP server in one terminal:
 
 ```powershell
 python -m server.http_runner
+```
+
+Run the automated test suite in another terminal:
+
+```powershell
 python -m pytest -q
 ```
 
@@ -115,9 +124,9 @@ The Windows workspace control app provides a project selector and folder
 registration form on its **Workspace** tab. Choose a registered project and
 press **Switch workspace**; if the service is running, the app restarts the MCP
 server and tunnel with that project selected. The **Usage** tab summarizes
-tool audit counts and read coverage, plus any paired token benchmark results
-entered in `benchmarks/results.csv`. The registry is stored in
-`logs/workspaces.json`.
+tool audit counts and read coverage, plus optional paired token benchmark
+results entered in the local, git-ignored `benchmarks/results.csv`. The
+registry is stored in `logs/workspaces.json`.
 
 For quicker startup, create a Windows shortcut that runs
 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<repo>\deployment\windows\workspace-control.ps1"`
@@ -135,20 +144,27 @@ configuration changes:
 pm2 restart mcp-workspace
 ```
 
-Connect an MCP client or Inspector to
-`https://<PUBLIC_HOSTNAME>/mcp` with `Authorization: Bearer MCP_TOKEN`.
-The authenticated session should initialize successfully and list exactly 10
+Connect an MCP client or Inspector to `https://<PUBLIC_HOSTNAME>/mcp`. OAuth
+clients can sign in with the workspace access key; legacy clients can use
+`Authorization: Bearer MCP_TOKEN`. An authenticated session exposes all 15
 tools. Keep `.env`, tokens, logs, and the external workspace out of commits.
 
 ## Run And Test
 
+Start the server:
+
 ```powershell
 python -m server.http_runner
+```
+
+In a separate terminal, run tests:
+
+```powershell
 python -m pytest
 ```
 
-For PM2 and ngrok, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). The repeatable
-acceptance flow is in [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
+For PM2 and ngrok, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). The automated
+acceptance checks are in `tests/`.
 
 ## Project Map
 
@@ -156,11 +172,9 @@ acceptance flow is in [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
 .github/             CI and dependency update automation
 server/              MCP app, core sandbox/audit, tools, and security modules
 tests/               Unit, security, HTTP, and MCP integration tests
-docs/                Architecture, security, operations, demo, and tracking
-benchmarks/          Repeatable token-efficiency tasks and results template
-scripts/             Audit telemetry and benchmark reporting
+docs/                Architecture, security, deployment, and Inspector notes
+scripts/             Audit telemetry and optional benchmark CSV reporting
 deployment/windows/  PM2 configuration and hidden Windows launcher
-examples/workspace/  Seed handoff files for the external workspace
 requirements/        Runtime, locked, and development dependency manifests
 README.md            Setup, capabilities, and project entry points
 ```

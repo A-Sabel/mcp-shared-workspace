@@ -157,12 +157,17 @@ def test_existing_file_is_not_overwritten(ws):
     assert content.startswith(original)
 
 
-def test_missing_handoff_file_is_rejected(ws):
-    (ws.root / "CHECKPOINTS.md").unlink()
+def test_missing_handoff_file_is_created(ws):
+    path = ws.root / "CHECKPOINTS.md"
+    path.unlink()
 
-    with pytest.raises((ValueError, SandboxError)):
-        append_state_impl(
-            ws,
-            "CHECKPOINTS.md",
-            "Checkpoint.",
-        )
+    result = append_state_impl(
+        ws,
+        "CHECKPOINTS.md",
+        "Checkpoint.",
+    )
+
+    content = path.read_text(encoding="utf-8")
+    assert "Checkpoint." in content
+    assert "UTC" in content
+    assert "CHECKPOINTS.md" in result

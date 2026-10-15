@@ -28,9 +28,12 @@ from server.workspaces import WorkspaceRegistry
 
 INSTRUCTIONS = (
     "Shared project workspace. Discover with list_files before reading. "
-    "read_file returns bounded chunks with total_lines and continuation metadata. "
-    "When asked to read a complete file, keep requesting next_start_line until "
-    "has_more is false, and report any file or range you could not finish."
+    "read_file returns bounded chunks with has_more and next_start_line; "
+    "total_lines may be null unless EOF was reached or counting was requested. "
+    "Use your judgment to decide whether a chunk is enough for the task; if you "
+    "need more context, request next_start_line; batch up to five known-needed "
+    "chunks with read_file ranges when useful. For complete-file requests, "
+    "continue until has_more is false. Report any file or range you could not finish."
 )
 
 

@@ -46,6 +46,15 @@ The live workspace is external to the server repository. This keeps application
 code, credentials, logs, and workspace content separate while allowing the
 workspace itself to have its own Git history.
 
+`read_file` returns bounded chunks and continuation metadata. The AI decides
+whether a chunk is sufficient for its task; when more context is needed it can
+continue from `next_start_line` or batch up to five known-needed ranges. For a
+complete-file request it should continue until `has_more` is false. The server
+stops after the requested range and one-line lookahead by default, so
+`total_lines` may be `null`. Set `count_total_lines=true` when an exact total
+is needed; that scans through EOF. The 64 KiB response limit measures bytes,
+not model tokens. See [Known limitations](SECURITY.md#known-limitations).
+
 The management tools persist named absolute directory paths in
 `WORKSPACE_REGISTRY_PATH` (default `logs/workspaces.json`). The configured
 `WORKSPACE_ROOT` is seeded as `default` the first time. `switch_workspace`

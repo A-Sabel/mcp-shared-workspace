@@ -2,7 +2,8 @@
 
 ## Configure
 
-1. Create the external workspace and seed it from `examples/workspace`.
+1. Create an external workspace directory and put the project files you want
+   to share in it. The workspace is separate from this server repository.
 2. Copy `.env.example` to `.env`.
 3. Set `WORKSPACE_ROOT`, one `MCP_TOKEN`, and `PUBLIC_HOSTNAME` to the ngrok
    hostname only, for example
@@ -77,8 +78,8 @@ try {
 
 After a hostname change, verify the unauthenticated health response, then use
 MCP Inspector against `https://<PUBLIC_HOSTNAME>/mcp` with the configured
-`MCP_TOKEN`; initialization should succeed and expose the workspace tools. At
-this Inspector flow, the legacy `MCP_TOKEN` grants the same workspace access.
+`MCP_TOKEN`; initialization should succeed and expose all 15 workspace tools.
+At this Inspector flow, the legacy `MCP_TOKEN` grants the same workspace access.
 Supply it through Inspector's secret/header UI, not a URL or saved command.
 For an MCP client's OAuth sign-in flow below, enter the workspace access key to
 authorize the profile.

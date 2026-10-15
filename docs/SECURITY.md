@@ -40,6 +40,14 @@
 
 ## Known limitations
 
+- `read_file` stops after the requested range and one-line lookahead by
+  default. It returns `total_lines: null` when it has not reached EOF. Setting
+  `count_total_lines=true` scans through EOF to calculate the exact total, even
+  when the requested range is near the beginning. This does not send the entire
+  file to the model; returned content stays within the tool's response limits.
+- The `read_file` response limit is 64 KiB, measured in bytes rather than
+  tokens. The actual token cost depends on the returned content and the
+  model's tokenizer.
 - A hard link inside the workspace can refer to an outside inode and cannot be
   identified using path checks alone.
 - A symlink can be swapped between validation and the file operation (TOCTOU).

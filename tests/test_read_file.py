@@ -1,6 +1,7 @@
 """Tests for bounded, sandboxed read_file ranges."""
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from server.tools.file_tools import (
     MAX_READ_LINES,
     MAX_READ_RANGES,
     read_file_impl,
+    read_file_result_impl,
     register,
 )
 
@@ -97,7 +99,7 @@ def test_invalid_ranges_fail_cleanly(sandbox, ranges, message):
 
 def test_ranges_must_be_a_list(sandbox):
     with pytest.raises(ValueError, match="ranges must be a list"):
-        read_file_impl(sandbox, {"path": "one.txt", "start": 1, "end": 1})
+        read_file_impl(sandbox, {"path": "one.txt", "start": 1, "end": 1}) # type: ignore
 
 
 @pytest.mark.parametrize("path", ["missing.txt", "subdir"])
@@ -119,6 +121,66 @@ def test_invalid_utf8_is_reported_as_text_read_error(sandbox):
     (sandbox.root / "binary.bin").write_bytes(b"\xff\xfe")
     with pytest.raises(ValueError, match="not valid UTF-8 text"):
         read_file_impl(sandbox, [{"path": "binary.bin", "start": 1, "end": 1}])
+
+
+class CountingTextReader:
+    def __init__(self, stream):
+        self.stream = stream
+        self.lines_read = 0
+        self.bytes_read = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return self.stream.__exit__(*args)
+
+    def __iter__(self):
+        for line in self.stream:
+            self.lines_read += 1
+            self.bytes_read += len(line.encode("utf-8"))
+            yield line
+
+
+@pytest.mark.parametrize(
+    "count_total_lines, expected_lines_read, expected_total",
+    [(False, 161, None), (True, 600, 600)],
+)
+def test_read_result_stops_early_unless_exact_total_requested(
+    sandbox, monkeypatch, count_total_lines, expected_lines_read, expected_total
+):
+    fixture = Path(__file__).parent / "fixtures" / "read_file_large.txt"
+    fixture_lines = fixture.read_text(encoding="utf-8").splitlines(keepends=True)
+    target = (sandbox.root / "large.txt").resolve()
+    target.write_text("".join(fixture_lines), encoding="utf-8")
+
+    original_open = Path.open
+    readers = []
+
+    def tracked_open(path, *args, **kwargs):
+        stream = original_open(path, *args, **kwargs)
+        if path.resolve() == target:
+            reader = CountingTextReader(stream)
+            readers.append(reader)
+            return reader
+        return stream
+
+    monkeypatch.setattr(Path, "open", tracked_open)
+    response = read_file_result_impl(
+        sandbox,
+        [{"path": "large.txt", "start": 150, "end": 160}],
+        count_total_lines=count_total_lines,
+    )
+    result = json.loads(response)["ranges"][0]
+
+    assert readers[0].lines_read == expected_lines_read
+    assert readers[0].bytes_read == sum(
+        len(line.encode("utf-8")) for line in fixture_lines[:expected_lines_read]
+    )
+    assert result["total_lines"] == expected_total
+    assert result["has_more"] is True
+    assert result["next_start_line"] == 161
+    assert result["content"].endswith("160: " + fixture_lines[159].rstrip("\n"))
 
 
 def test_read_file_is_registered_for_authenticated_client(tmp_path):

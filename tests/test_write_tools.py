@@ -1,5 +1,7 @@
 """Tests for write-oriented file tools."""
 
+import json
+
 import pytest
 
 from server.sandbox import Sandbox, SandboxError
@@ -286,15 +288,13 @@ def test_delete_file_moves_file_to_trash(workspace):
         "temporary.txt",
     )
 
-    trash_path = (
-        workspace.root
-        / ".trash"
-        / "temporary.txt"
-    )
+    result_data = json.loads(result)
+    trash_path = workspace.root / result_data["trash_path"]
 
     assert "temporary.txt" in result
     assert not path.exists()
     assert trash_path.exists()
+    assert trash_path.name == "payload"
     assert trash_path.read_text(
         encoding="utf-8"
     ) == "delete me"
@@ -318,12 +318,12 @@ def test_delete_file_does_not_overwrite_existing_trash_file(
         encoding="utf-8",
     )
 
-    delete_file_impl(
+    result = delete_file_impl(
         workspace,
         "temporary.txt",
     )
 
-    new_trash_file = trash / "temporary~1.txt"
+    new_trash_file = workspace.root / json.loads(result)["trash_path"]
 
     assert existing.read_text(
         encoding="utf-8"
@@ -334,7 +334,7 @@ def test_delete_file_does_not_overwrite_existing_trash_file(
     ) == "new content"
 
 
-def test_delete_file_preserves_nested_path_in_trash(workspace):
+def test_delete_file_preserves_original_nested_path_in_trash_metadata(workspace):
     path = (
         workspace.root
         / "src"
@@ -348,21 +348,19 @@ def test_delete_file_preserves_nested_path_in_trash(workspace):
         encoding="utf-8",
     )
 
-    delete_file_impl(
+    result = delete_file_impl(
         workspace,
         "src/utils/helper.py",
     )
 
-    trash_path = (
-        workspace.root
-        / ".trash"
-        / "src"
-        / "utils"
-        / "helper.py"
-    )
+    result_data = json.loads(result)
+    trash_path = workspace.root / result_data["trash_path"]
+    metadata_path = trash_path.parent / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
 
     assert not path.exists()
     assert trash_path.exists()
+    assert metadata["original_path"] == "src/utils/helper.py"
     assert trash_path.read_text(
         encoding="utf-8"
     ) == "print('hello')\n"
