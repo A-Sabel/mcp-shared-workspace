@@ -83,6 +83,8 @@ def search_files_impl(
         if not candidates:
             return f"No files matched glob {glob!r} under {path!r}."
 
+    candidates.sort(key=lambda candidate: (sandbox.relative(candidate).casefold(), sandbox.relative(candidate)))
+
     glob_candidate_count = len(candidates) if glob else None
 
     pattern = None

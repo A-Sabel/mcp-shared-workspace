@@ -5,7 +5,7 @@ import subprocess
 import pytest
 
 from server.sandbox import Sandbox, SandboxError
-from server.tools.git_tools import (git_status_impl, git_diff_impl, git_commit_impl, git_log_impl, git_list_branches_impl, git_create_branch_impl, git_switch_branch_impl)
+from server.tools.git_tools import (git_status_impl, git_diff_impl, git_commit_impl, git_log_impl, git_list_branches_impl, git_create_branch_impl, git_switch_branch_impl, git_unstage_impl, git_restore_impl, git_stash_impl)
 
 @pytest.fixture
 def git_ws(tmp_path):
@@ -408,3 +408,55 @@ def test_git_diff_both_includes_staged_and_unstaged(git_ws):
 def test_git_diff_rejects_invalid_mode(git_ws):
     with pytest.raises(ValueError, match="mode must be"):
         git_diff_impl(git_ws, mode="all")
+
+
+def test_git_unstage_changes_index_but_not_worktree(git_ws):
+    path = git_ws.root / "file.txt"
+    path.write_text("content\n", encoding="utf-8")
+    subprocess.run(["git", "add", "file.txt"], cwd=git_ws.root, check=True)
+    git_unstage_impl(git_ws, ["file.txt"])
+    status = git_status_impl(git_ws)
+    assert "?? file.txt" in status
+    assert path.read_text(encoding="utf-8") == "content\n"
+
+
+def test_git_restore_requires_explicit_confirmation_and_preview(git_ws):
+    path = git_ws.root / "file.txt"
+    path.write_text("original\n", encoding="utf-8")
+    git_commit_impl(git_ws, "initial", ["file.txt"])
+    path.write_text("changed\n", encoding="utf-8")
+    preview = git_restore_impl(git_ws, ["file.txt"], dry_run=True)
+    assert "DRY RUN" in preview
+    with pytest.raises(ValueError, match="confirm=true"):
+        git_restore_impl(git_ws, ["file.txt"], confirm=False, dry_run=False)
+    git_restore_impl(git_ws, ["file.txt"], confirm=True, dry_run=False)
+    assert path.read_text(encoding="utf-8") == "original\n"
+
+
+def test_git_restore_never_accepts_workspace_root(git_ws):
+    with pytest.raises(ValueError):
+        git_restore_impl(git_ws, ["."], confirm=True, dry_run=False)
+
+
+def test_git_stash_pop_retains_stash_when_apply_conflicts(git_ws):
+    path = git_ws.root / "file.txt"
+    path.write_text("base\n", encoding="utf-8")
+    git_commit_impl(git_ws, "initial", ["file.txt"])
+    path.write_text("stashed\n", encoding="utf-8")
+    git_stash_impl(git_ws, "push")
+    path.write_text("conflicting local\n", encoding="utf-8")
+    assert "stash@{0}" in git_stash_impl(git_ws, "list")
+    with pytest.raises(ValueError, match="stash retained"):
+        git_stash_impl(git_ws, "pop")
+    assert "stash@{0}" in git_stash_impl(git_ws, "list")
+
+
+def test_git_stash_drop_requires_confirmation(git_ws):
+    path = git_ws.root / "file.txt"
+    path.write_text("base\n", encoding="utf-8")
+    git_commit_impl(git_ws, "initial", ["file.txt"])
+    path.write_text("changed\n", encoding="utf-8")
+    git_stash_impl(git_ws, "push")
+    with pytest.raises(ValueError, match="confirm=true"):
+        git_stash_impl(git_ws, "drop")
+    assert "stash@{0}" in git_stash_impl(git_ws, "list")

@@ -27,9 +27,10 @@ The MCP server exposes the tools registered by the server modules to the authent
 | `append_state`       | Add a handoff entry to the shared state files.                  |
 | `git_status`         | Show the workspace Git status.                                  |
 | `git_diff`           | Inspect bounded staged, unstaged, or combined Git changes.       |
-| `write_file`         | Create or replace a file, optionally guarded by its SHA-256 hash. |
+| `write_file`         | Create or replace a file, optionally guarded by SHA-256 or create-only mode. |
 | `str_replace`        | Replace exact text, optionally guarded by its SHA-256 hash.      |
 | `delete_file`        | Soft-delete a file by moving it to `.trash`.                    |
+| `list_trash`         | Browse soft-deleted files and recover their exact restore paths. |
 | `restore_file`       | Restore a soft-deleted file without overwriting conflicts.      |
 | `remove_directory`   | Remove an empty directory; non-empty directories are refused.   |
 | `move_file`           | Move or rename a regular file within the workspace.               |
@@ -38,12 +39,15 @@ The MCP server exposes the tools registered by the server modules to the authent
 | `archive_state`       | Preserve a state file as an immutable archive copy.                 |
 | `compact_state`       | Archive full state before applying an agent-provided summary.       |
 | `read_audit_log`      | Read bounded, filtered recent audit records.                        |
-| `apply_patch`         | Apply exact-context unified diffs to existing files with per-file atomic replacement.    |
+| `apply_patch`         | Apply exact-context patches with staged replacements and rollback on swap failures. |
 | `find_symbol`         | Find likely declarations of a symbol across source files.         |
 | `find_references`     | Find lexical references to a symbol across source files.          |
 | `git_list_branches`   | List local branches and identify the current branch.              |
 | `git_create_branch`   | Create a local branch without switching or overwriting.           |
 | `git_switch_branch`   | Switch to an existing branch only from a clean working tree.      |
+| `git_unstage`         | Unstage only explicitly selected paths without changing working files. |
+| `git_restore`         | Preview or restore explicitly selected working-tree paths; confirmation required. |
+| `git_stash`           | List, push, apply, pop, or confirmed drop of Git stashes.           |
 | `git_commit`         | Commit explicitly selected safe workspace paths.                |
 | `git_log`            | Show recent commits and changed-file summaries.                  |
 | `get_workspace_context` | Return selected project context within a token budget.         |
@@ -65,13 +69,13 @@ second-level Markdown section. `archive_state` preserves the current file withou
 changing it. `compact_state` first creates a content-addressed archive, then atomically
 replaces the active file with the agent-supplied summary; the server does not generate
 summaries or delete archived history. Archives are stored under `.workspace-archive/`.
-Branch tools operate on local branches only. `git_create_branch` validates the ref and refuses an existing name without changing the current branch. `git_switch_branch` refuses any staged, unstaged, or untracked changes and never stashes, resets, or discards work.
+Branch tools operate on local branches only. `git_create_branch` validates the ref and refuses an existing name without changing the current branch. `git_switch_branch` refuses any staged, unstaged, or untracked changes. `git_unstage` changes only the index for explicit paths. `git_restore` previews by default and requires `confirm=true` plus explicit paths before discarding working-tree changes. `git_stash` supports list/push/apply/pop/drop; untracked files are included only with `include_untracked=true`, stash drops require confirmation, and `pop` applies before dropping so conflicts retain the stash.
 
 `run_project_checks` optionally reads `.mcp-workspace-checks.json`, whose only supported keys are `pytest`, `ruff`, and `mypy`, each with a `paths` array. The file can select existing workspace-relative targets but cannot provide commands, flags, environment variables, or executable scripts; the server constructs every command from its fixed allowlist. Without this file, the prior automatic configuration detection and default pytest behavior remain.
 
 `find_symbol` uses Python AST for Python declarations and conservative declaration patterns for other supported source types. `find_references` performs bounded lexical matching; it is not a language-server-grade semantic index. Both report partial results when the file scan limit is reached.
 
-`apply_patch` accepts unified diffs for existing UTF-8 files only. It validates every target and exact hunk context before writing, rejects renames/creation/deletion and protected paths, and prepares all replacements before swapping files individually. Each file swap is atomic; a multi-file patch is not a filesystem-wide transaction. It does not support fuzzy matching.
+`apply_patch` accepts unified diffs for existing UTF-8 files only. It validates every target and exact hunk context before writing, rejects renames/creation/deletion and protected paths, and stages both replacement contents and rollback copies before swapping. If a swap fails, it attempts to restore every original file; this provides rollback for ordinary runtime failures, not crash-safe filesystem-wide atomicity. It does not support fuzzy matching. Pass `expected_hash` for a single-file patch, or an `expected_hashes` mapping covering every patched path, to reject stale edits.
 `read_audit_log` reads at most the last 1 MB of JSONL data and returns at most 200
 matching records / 64 KB. `move_file` refuses overwrites unless explicitly enabled.
 
@@ -89,8 +93,11 @@ fit in a response is an error.
 
 `git_diff` accepts `mode=unstaged` (default), `mode=staged`, or `mode=both`.
 For concurrent edits, pass the `sha256` returned by `read_file` as `expected_hash`
-to `write_file` or `str_replace`; it is the SHA-256 hex digest of the current file bytes. A mismatch
-returns a conflict and leaves the file unchanged. `list_files` and `search_files`
+to `write_file`, `str_replace`, or a single-file `apply_patch`. For multi-file patches,
+pass `expected_hashes` with an entry for every patched path. A mismatch returns a conflict
+and leaves the patch unapplied; conflict errors include the current file hash for re-reading and merging. `write_file` also supports `create_only=true` to refuse
+existing targets. These checks use a shared process-local lock and do not provide cross-process
+compare-and-swap guarantees. `list_files` and `search_files` return deterministically ordered results within their bounded scans; pagination is offset-based only where exposed, so concurrent file changes can shift later pages.
 respect Git ignore rules when run inside a Git repository with Git available;
 when Git cannot be used, they fall back to normal sandboxed traversal.
 
@@ -187,8 +194,9 @@ and pin it to your desktop or taskbar.
 
 Permanent deletion is not exposed until a trusted approval flow is available.
 `delete_file` moves files into uniquely named `.trash` entries with metadata;
-use the returned `trash_path` with `restore_file`. `remove_directory` only
-removes empty directories.
+use the returned `trash_path` with `restore_file`, or recover it later through
+`list_trash` (bounded with `limit` and `offset`). `remove_directory` only removes
+empty directories.
 
 Set `PUBLIC_HOSTNAME` to the hostname reported by ngrok, then restart after
 configuration changes:

@@ -290,6 +290,7 @@ def list_files_impl(
             )
         ]
 
+    found.sort(key=lambda item: (sandbox.relative(item[0]).casefold(), sandbox.relative(item[0])))
     total = len(found)
 
     scope = f"depth {max_depth}"

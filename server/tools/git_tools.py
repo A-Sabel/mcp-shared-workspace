@@ -365,6 +365,97 @@ def git_switch_branch_impl(sandbox: Sandbox, branch_name: str) -> str:
     return f"Switched to branch {name!r}."
 
 
+def _explicit_git_paths(sandbox: Sandbox, paths: list[str]) -> list[str]:
+    if not isinstance(paths, list) or not paths:
+        raise ValueError("Provide at least one explicit path; workspace-wide operations are not allowed.")
+    if len(paths) > 50:
+        raise ValueError("At most 50 paths may be supplied.")
+    safe: list[str] = []
+    for path in paths:
+        if not isinstance(path, str) or not path.strip():
+            raise ValueError("Every path must be a non-empty workspace-relative string.")
+        resolved = sandbox.resolve(path, for_write=True)
+        if resolved == sandbox.root:
+            raise ValueError("The workspace root cannot be selected.")
+        relative = sandbox.relative(resolved)
+        if relative not in safe:
+            safe.append(relative)
+    return safe
+
+
+def git_unstage_impl(sandbox: Sandbox, paths: list[str]) -> str:
+    safe = _explicit_git_paths(sandbox, paths)
+    result = _run_git(sandbox, ["reset", "--quiet", "HEAD", "--", *safe])
+    if result.returncode != 0:
+        detail = _bounded_output(result.stdout, result.stderr)
+        raise ValueError(f"git unstage failed{': ' + detail if detail else '.'}")
+    return "Unstaged only: " + ", ".join(safe) + ". Working-tree files were not changed."
+
+
+def git_restore_impl(sandbox: Sandbox, paths: list[str], confirm: bool = False, dry_run: bool = True) -> str:
+    safe = _explicit_git_paths(sandbox, paths)
+    if dry_run:
+        status = _run_git(sandbox, ["status", "--short", "--", *safe])
+        if status.returncode != 0:
+            raise ValueError("Unable to preview selected restore paths.")
+        return "DRY RUN — would discard unstaged working-tree changes for: " + ", ".join(safe) + ".\n" + (status.stdout.strip() or "No matching working-tree changes.")
+    if confirm is not True:
+        raise ValueError("Destructive restore requires confirm=true. Run dry_run=true first.")
+    result = _run_git(sandbox, ["restore", "--worktree", "--", *safe])
+    if result.returncode != 0:
+        detail = _bounded_output(result.stdout, result.stderr)
+        raise ValueError(f"git restore failed{': ' + detail if detail else '.'}")
+    return "Restored working-tree content for explicit paths only: " + ", ".join(safe)
+
+
+_STASH_REF_RE = re.compile(r"^stash@\\{[0-9]{1,6}\\}$")
+
+
+def _validate_stash_ref(ref: str) -> str:
+    if (not isinstance(ref, str) or not ref.startswith("stash@{") or not ref.endswith("}")
+            or not ref[7:-1].isdigit() or len(ref[7:-1]) > 6):
+        raise ValueError("Use a stash reference in the form stash@{0}.")
+    return ref
+
+
+def git_stash_impl(sandbox: Sandbox, action: str, include_untracked: bool = False,
+                   message: str = "MCP workspace stash", stash_ref: str = "stash@{0}",
+                   confirm: bool = False) -> str:
+    if action == "list":
+        result = _run_git(sandbox, ["stash", "list", "--format=%gd %gs"])
+    elif action == "push":
+        args = ["stash", "push"]
+        if include_untracked:
+            args.append("--include-untracked")
+        args.extend(["-m", message])
+        result = _run_git(sandbox, args)
+    elif action in {"apply", "pop", "drop"}:
+        ref = _validate_stash_ref(stash_ref)
+        if action == "drop":
+            if confirm is not True:
+                raise ValueError("Dropping a stash is destructive; require confirm=true.")
+            result = _run_git(sandbox, ["stash", "drop", ref])
+        elif action == "apply":
+            result = _run_git(sandbox, ["stash", "apply", ref])
+        else:
+            # Apply first; retain the stash whenever applying fails or conflicts.
+            applied = _run_git(sandbox, ["stash", "apply", ref])
+            if applied.returncode != 0:
+                detail = _bounded_output(applied.stdout, applied.stderr)
+                raise ValueError(f"Stash apply failed; stash retained: {detail}")
+            result = _run_git(sandbox, ["stash", "drop", ref])
+            if result.returncode != 0:
+                detail = _bounded_output(result.stdout, result.stderr)
+                raise ValueError(f"Stash applied, but could not drop it: {detail}")
+            return _bounded_output(applied.stdout, applied.stderr) or f"Applied and dropped {ref}."
+    else:
+        raise ValueError("action must be list, push, apply, pop, or drop.")
+    if result.returncode != 0:
+        detail = _bounded_output(result.stdout, result.stderr)
+        raise ValueError(f"git stash {action} failed{': ' + detail if detail else '.'}")
+    return _bounded_output(result.stdout, result.stderr) or f"git stash {action} completed."
+
+
 def register(
     mcp: MCPServer,
     sandbox: Sandbox,
@@ -513,3 +604,37 @@ def register(
         return git_switch_branch_impl(sandbox, branch_name)
 
     mcp.add_tool(git_switch_branch, name="git_switch_branch", structured_output=False)
+
+    @audited(tool_name="git_unstage", role=client_id, log_path=log_path,
+             summarize=lambda _a, kw: {"paths": kw.get("paths", [])})
+    def git_unstage(paths: Annotated[list[str], Field(min_length=1, max_length=50,
+                       description="Explicit workspace-relative paths to unstage; working files remain unchanged.")]) -> str:
+        """Remove selected paths from the index without changing working-tree files."""
+        return git_unstage_impl(sandbox, paths)
+    mcp.add_tool(git_unstage, name="git_unstage", structured_output=False)
+
+    @audited(tool_name="git_restore", role=client_id, log_path=log_path,
+             summarize=lambda _a, kw: {"paths": kw.get("paths", []), "dry_run": kw.get("dry_run")})
+    def git_restore(
+        paths: Annotated[list[str], Field(min_length=1, max_length=50,
+               description="Explicit workspace-relative paths only; no workspace-wide restore.")],
+        confirm: Annotated[bool, Field(description="Must be true for destructive execution.")] = False,
+        dry_run: Annotated[bool, Field(description="Preview only; defaults to true.")] = True,
+    ) -> str:
+        """Preview or restore only explicit working-tree paths; destructive execution requires confirmation."""
+        return git_restore_impl(sandbox, paths, confirm, dry_run)
+    mcp.add_tool(git_restore, name="git_restore", structured_output=False)
+
+    @audited(tool_name="git_stash", role=client_id, log_path=log_path,
+             summarize=lambda _a, kw: {"action": kw.get("action"), "include_untracked": kw.get("include_untracked")})
+    def git_stash(
+        action: Annotated[str, Field(description="list, push, apply, pop, or drop.")],
+        include_untracked: Annotated[bool, Field(description="Explicitly include untracked files on push.")] = False,
+        message: Annotated[str, Field(max_length=200, description="Stash message for push.")] = "MCP workspace stash",
+        stash_ref: Annotated[str, Field(description="Explicit stash reference, e.g. stash@{0}.")] = "stash@{0}",
+        confirm: Annotated[bool, Field(description="Must be true to drop a stash.")] = False,
+    ) -> str:
+        """Manage stashes; pop applies before dropping, and retains the stash if apply conflicts."""
+        return git_stash_impl(sandbox, action, include_untracked, message, stash_ref, confirm)
+    mcp.add_tool(git_stash, name="git_stash", structured_output=False)
+

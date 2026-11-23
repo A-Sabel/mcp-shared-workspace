@@ -247,6 +247,7 @@ def test_authenticated_client_sees_all_tools(tmp_path: Path):
             "write_file",
             "str_replace",
             "delete_file",
+            "list_trash",
             "restore_file",
             "remove_directory",
             "git_commit",
@@ -272,6 +273,9 @@ def test_authenticated_client_sees_all_tools(tmp_path: Path):
             "git_list_branches",
             "git_create_branch",
             "git_switch_branch",
+            "git_unstage",
+            "git_restore",
+            "git_stash",
         }
 
         assert names == expected_tools
@@ -289,7 +293,11 @@ def test_authenticated_client_sees_all_tools(tmp_path: Path):
         assert schemas["create_directory"]["properties"]["path"]["type"] == "string"
         assert schemas["read_state"]["properties"]["limit"]["maximum"] == 100
         assert schemas["read_audit_log"]["properties"]["limit"]["maximum"] == 200
+        assert schemas["write_file"]["properties"]["create_only"]["type"] == "boolean"
+        assert schemas["list_trash"]["properties"]["limit"]["maximum"] == 100
         assert schemas["apply_patch"]["properties"]["patch"]["type"] == "string"
+        assert "expected_hash" in schemas["apply_patch"]["properties"]
+        assert "expected_hashes" in schemas["apply_patch"]["properties"]
         assert schemas["find_symbol"]["properties"]["symbol"]["type"] == "string"
         assert schemas["find_references"]["properties"]["symbol"]["type"] == "string"
         assert schemas["git_create_branch"]["properties"]["branch_name"]["type"] == "string"

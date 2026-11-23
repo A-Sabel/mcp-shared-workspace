@@ -44,6 +44,7 @@ def _check_expected_hash(target: Path, expected_hash: str | None, path: str) -> 
     if actual.lower() != expected_hash.lower():
         raise ValueError(
             f"Concurrency conflict for {path}: expected_hash does not match current file content. "
+            f"Current SHA-256: {actual}. "
             "Read the latest file and retry with its current hash."
         )
 
@@ -66,8 +67,9 @@ def write_file_impl(
     path: str,
     content: str,
     expected_hash: str | None = None,
+    create_only: bool = False,
 ) -> str:
-    """Create or overwrite one file inside the sandbox."""
+    """Create a file, or overwrite it when concurrency conditions allow."""
     if not isinstance(content, str):
         raise ValueError("content must be a string.")
 
@@ -76,13 +78,25 @@ def write_file_impl(
 
     target = sandbox.resolve(path, for_write=True)
 
+    if create_only and expected_hash is not None:
+        raise ValueError("create_only cannot be combined with expected_hash.")
+
     with _FILE_WRITE_LOCK:
+        if create_only and os.path.lexists(target):
+            raise ValueError(f"File already exists: {path}")
         if expected_hash is not None:
             _check_expected_hash(target, expected_hash, path)
         if target.exists() and not target.is_file():
             raise ValueError(f"Target is not a regular file: {path}")
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        if create_only:
+            try:
+                with target.open("x", encoding="utf-8", newline="") as stream:
+                    stream.write(content)
+            except FileExistsError:
+                raise ValueError(f"File already exists: {path}") from None
+        else:
+            target.write_text(content, encoding="utf-8")
 
     return (
         f"Wrote {sandbox.relative(target)} "
@@ -175,6 +189,63 @@ def delete_file_impl(
         original_path=original_path,
         trash_path=trash_path,
         message="File moved to workspace trash; use restore_file with trash_path to restore it.",
+    )
+
+
+def list_trash_impl(sandbox: Sandbox, limit: int = 50, offset: int = 0) -> str:
+    """List valid soft-deleted files so callers can recover a lost trash_path."""
+    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
+        raise ValueError("limit must be between 1 and 100.")
+    if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+        raise ValueError("offset must be a non-negative integer.")
+
+    trash_root = sandbox.trash_dir
+    is_junction = getattr(trash_root, "is_junction", lambda: False)
+    if trash_root.is_symlink() or is_junction():
+        raise ValueError("Workspace trash cannot be a symlink or junction.")
+    if not os.path.lexists(trash_root):
+        return _json_result(entries=[], total=0, offset=offset, limit=limit, has_more=False, next_offset=None)
+    if not trash_root.is_dir():
+        raise ValueError("Workspace trash path is not a directory.")
+
+    entries: list[dict[str, object]] = []
+    for entry_dir in trash_root.iterdir():
+        is_junction = getattr(entry_dir, "is_junction", lambda: False)
+        if entry_dir.is_symlink() or is_junction() or not entry_dir.is_dir():
+            continue
+        payload = entry_dir / "payload"
+        metadata_path = entry_dir / "metadata.json"
+        if payload.is_symlink() or metadata_path.is_symlink() or not payload.is_file() or not metadata_path.is_file():
+            continue
+        try:
+            metadata = _load_trash_metadata(metadata_path, expected_kind="file")
+            canonical_path = sandbox.relative(payload)
+            if metadata.get("trash_path") != canonical_path:
+                continue
+            original_path = metadata.get("original_path")
+            created_at = metadata.get("created_at")
+            if not isinstance(original_path, str) or not isinstance(created_at, str):
+                continue
+            entries.append({
+                "original_path": original_path,
+                "trash_path": canonical_path,
+                "deleted_at": created_at,
+                "created_at": created_at,
+                "size_bytes": payload.stat().st_size,
+            })
+        except (OSError, ValueError):
+            continue
+
+    entries.sort(key=lambda item: str(item["created_at"]), reverse=True)
+    page = entries[offset:offset + limit]
+    has_more = offset + len(page) < len(entries)
+    return _json_result(
+        entries=page,
+        total=len(entries),
+        offset=offset,
+        limit=limit,
+        has_more=has_more,
+        next_offset=offset + len(page) if has_more else None,
     )
 
 
@@ -396,7 +467,7 @@ Create or overwrite one UTF-8 text file inside the workspace.
 Use this when a file needs to be created or its complete contents need to be
 replaced. The path must remain inside the sandbox and protected paths such as
 .git and environment/credential files are rejected. Prefer str_replace for a
-small targeted edit so unnecessary file contents do not need to be rewritten. Pass expected_hash (SHA-256 of the current file bytes) to prevent overwriting concurrent changes.
+small targeted edit so unnecessary file contents do not need to be rewritten. Pass expected_hash (SHA-256 of the current file bytes) to prevent overwriting concurrent changes, or set create_only=true to fail if the target already exists.
 """.strip()
 
 
@@ -418,6 +489,13 @@ permanently deleted. The JSON result contains original_path and trash_path.
 Preserve trash_path so restore_file can restore the file. Protected paths,
 symbolic links, and junctions are rejected.
 """.strip()
+
+LIST_TRASH_DESCRIPTION = """
+List valid soft-deleted files in the workspace trash. Returns original paths,
+exact trash_path values accepted by restore_file, creation timestamps, and sizes.
+Use offset and limit to browse larger trash collections.
+""".strip()
+
 
 RESTORE_FILE_DESCRIPTION = """
 Restore a file moved by delete_file. Pass the exact trash_path returned by
@@ -458,8 +536,9 @@ def register(
         path: str = Field(description="Workspace-relative file path."),
         content: str = Field(description="Complete UTF-8 text content to write."),
         expected_hash: str | None = Field(default=None, description="Optional SHA-256 hash of the existing file bytes; rejects stale writes."),
+        create_only: bool = Field(default=False, description="Create only; fail if the target already exists."),
     ) -> str:
-        return write_file_impl(sandbox, path, content, expected_hash)
+        return write_file_impl(sandbox, path, content, expected_hash, create_only)
 
     set_property_type(mcp, "write_file", "expected_hash", "string")
 
@@ -509,6 +588,19 @@ def register(
         path: str = Field(description="Workspace-relative file path."),
     ) -> str:
         return delete_file_impl(sandbox, path)
+
+    @mcp.tool(name="list_trash", description=LIST_TRASH_DESCRIPTION)
+    @audited(
+        tool_name="list_trash",
+        role=client_id,
+        log_path=log_path,
+        summarize=lambda _args, kwargs: {"limit": kwargs.get("limit"), "offset": kwargs.get("offset")},
+    )
+    def list_trash(
+        limit: int = Field(default=50, ge=1, le=100, description="Maximum entries to return."),
+        offset: int = Field(default=0, ge=0, description="Number of entries to skip."),
+    ) -> str:
+        return list_trash_impl(sandbox, limit, offset)
 
     @mcp.tool(name="restore_file", description=RESTORE_FILE_DESCRIPTION)
     @audited(

@@ -1,5 +1,7 @@
 """Tests for exact-context unified patch application."""
 
+import hashlib
+
 import pytest
 
 from server.sandbox import Sandbox, SandboxError
@@ -36,3 +38,77 @@ def test_patch_rejects_rename_and_create(tmp_path):
         apply_patch_impl(Sandbox(tmp_path), "--- a/a.txt\n+++ b/b.txt\n@@ -1 +1 @@\n-a\n+b\n")
     with pytest.raises(ValueError, match="creation and deletion"):
         apply_patch_impl(Sandbox(tmp_path), "--- /dev/null\n+++ b/new.txt\n@@ -0,0 +1 @@\n+x\n")
+
+
+def test_apply_patch_rejects_stale_expected_hash(tmp_path):
+    target = tmp_path / "a.txt"
+    target.write_text("one\ntwo\n", encoding="utf-8")
+    stale_hash = hashlib.sha256(b"old content").hexdigest()
+    patch = "--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n one\n-two\n+TWO\n"
+
+    with pytest.raises(ValueError, match="Concurrency conflict"):
+        apply_patch_impl(Sandbox(tmp_path), patch, expected_hash=stale_hash)
+
+    assert target.read_text(encoding="utf-8") == "one\ntwo\n"
+
+
+def test_apply_patch_accepts_current_expected_hash(tmp_path):
+    target = tmp_path / "a.txt"
+    target.write_text("one\ntwo\n", encoding="utf-8")
+    current_hash = hashlib.sha256(target.read_bytes()).hexdigest()
+    patch = "--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n one\n-two\n+TWO\n"
+
+    apply_patch_impl(Sandbox(tmp_path), patch, expected_hash=current_hash)
+    assert target.read_text(encoding="utf-8") == "one\nTWO\n"
+
+
+def test_apply_patch_requires_hash_for_every_file_when_mapping_supplied(tmp_path):
+    for name in ("a.txt", "b.txt"):
+        (tmp_path / name).write_text("old\n", encoding="utf-8")
+    patch = (
+        "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n"
+        "--- a/b.txt\n+++ b/b.txt\n@@ -1 +1 @@\n-old\n+new\n"
+    )
+
+    with pytest.raises(ValueError, match="exactly one"):
+        apply_patch_impl(Sandbox(tmp_path), patch, expected_hashes={"a.txt": "0" * 64})
+
+
+def test_apply_patch_rejects_expected_hash_for_multi_file_patch(tmp_path):
+    for name in ("a.txt", "b.txt"):
+        (tmp_path / name).write_text("old\n", encoding="utf-8")
+    patch = (
+        "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n"
+        "--- a/b.txt\n+++ b/b.txt\n@@ -1 +1 @@\n-old\n+new\n"
+    )
+
+    with pytest.raises(ValueError, match="single-file"):
+        apply_patch_impl(Sandbox(tmp_path), patch, expected_hash="0" * 64)
+
+
+def test_multi_file_patch_rolls_back_when_a_swap_fails(tmp_path, monkeypatch):
+    import server.tools.patch_tools as patch_module
+
+    a = tmp_path / "a.txt"
+    b = tmp_path / "b.txt"
+    a.write_text("old-a\n", encoding="utf-8")
+    b.write_text("old-b\n", encoding="utf-8")
+    patch = (
+        "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old-a\n+new-a\n"
+        "--- a/b.txt\n+++ b/b.txt\n@@ -1 +1 @@\n-old-b\n+new-b\n"
+    )
+    real_replace = patch_module.os.replace
+    calls = 0
+
+    def fail_second_swap(source, target):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("injected swap failure")
+        return real_replace(source, target)
+
+    monkeypatch.setattr(patch_module.os, "replace", fail_second_swap)
+    with pytest.raises(OSError, match="injected swap failure"):
+        apply_patch_impl(Sandbox(tmp_path), patch)
+    assert a.read_text(encoding="utf-8") == "old-a\n"
+    assert b.read_text(encoding="utf-8") == "old-b\n"

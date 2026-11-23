@@ -8,6 +8,7 @@ import pytest
 from server.sandbox import Sandbox, SandboxError
 from server.tools.write_tools import (
     delete_file_impl,
+    list_trash_impl,
     str_replace_impl,
     write_file_impl,
 )
@@ -426,12 +427,13 @@ def test_delete_file_rejects_git_directory(workspace):
         )
 
 
-def test_write_file_rejects_stale_expected_hash(workspace):
+def test_write_file_rejects_stale_expected_hash_and_reports_current_hash(workspace):
     path = workspace.root / "notes.txt"
     path.write_text("version one", encoding="utf-8")
     stale_hash = hashlib.sha256(b"older version").hexdigest()
+    current_hash = hashlib.sha256(path.read_bytes()).hexdigest()
 
-    with pytest.raises(ValueError, match="Concurrency conflict"):
+    with pytest.raises(ValueError, match=current_hash):
         write_file_impl(workspace, "notes.txt", "overwrite", stale_hash)
 
     assert path.read_text(encoding="utf-8") == "version one"
@@ -456,3 +458,104 @@ def test_str_replace_rejects_stale_expected_hash(workspace):
         str_replace_impl(workspace, "notes.txt", "world", "MCP", expected_hash=stale_hash)
 
     assert path.read_text(encoding="utf-8") == "hello world"
+
+
+def test_write_file_create_only_refuses_existing_file(workspace):
+    path = workspace.root / "notes.txt"
+    path.write_text("keep me", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="already exists"):
+        write_file_impl(workspace, "notes.txt", "replace me", create_only=True)
+
+    assert path.read_text(encoding="utf-8") == "keep me"
+
+
+def test_write_file_create_only_creates_missing_file(workspace):
+    write_file_impl(workspace, "new.txt", "created", create_only=True)
+    assert (workspace.root / "new.txt").read_text(encoding="utf-8") == "created"
+
+
+def test_write_file_create_only_rejects_expected_hash(workspace):
+    with pytest.raises(ValueError, match="cannot be combined"):
+        write_file_impl(workspace, "new.txt", "created", "0" * 64, create_only=True)
+
+
+def test_list_trash_returns_restore_path_and_metadata(workspace):
+    (workspace.root / "notes.txt").write_text("recover me", encoding="utf-8")
+    deleted = json.loads(delete_file_impl(workspace, "notes.txt"))
+
+    result = json.loads(list_trash_impl(workspace))
+    assert result["total"] == 1
+    assert result["entries"][0]["original_path"] == "notes.txt"
+    assert result["entries"][0]["trash_path"] == deleted["trash_path"]
+    assert result["entries"][0]["size_bytes"] == len("recover me")
+
+
+def test_list_trash_supports_pagination(workspace):
+    for name in ("a.txt", "b.txt", "c.txt"):
+        (workspace.root / name).write_text(name, encoding="utf-8")
+        delete_file_impl(workspace, name)
+
+    first = json.loads(list_trash_impl(workspace, limit=2, offset=0))
+    second = json.loads(list_trash_impl(workspace, limit=2, offset=2))
+    assert len(first["entries"]) == 2
+    assert first["has_more"] is True
+    assert second["has_more"] is False
+    assert len(second["entries"]) == 1
+
+
+def test_list_trash_rejects_invalid_pagination(workspace):
+    with pytest.raises(ValueError, match="limit"):
+        list_trash_impl(workspace, limit=0)
+    with pytest.raises(ValueError, match="offset"):
+        list_trash_impl(workspace, offset=-1)
+
+
+def test_list_trash_empty_workspace_has_zero_total(workspace):
+    result = json.loads(list_trash_impl(workspace))
+    assert result["entries"] == []
+    assert result["total"] == 0
+    assert result["has_more"] is False
+
+
+def test_str_replace_stale_hash_reports_current_hash(workspace):
+    path = workspace.root / "notes.txt"
+    path.write_text("hello world", encoding="utf-8")
+    current_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match=current_hash):
+        str_replace_impl(workspace, "notes.txt", "world", "MCP", expected_hash="0" * 64)
+    assert path.read_text(encoding="utf-8") == "hello world"
+
+
+def test_expected_hash_allows_only_one_concurrent_writer(workspace):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    path = workspace.root / "notes.txt"
+    path.write_text("initial", encoding="utf-8")
+    expected = hashlib.sha256(path.read_bytes()).hexdigest()
+    barrier = Barrier(2)
+
+    def write(value):
+        barrier.wait()
+        try:
+            write_file_impl(workspace, "notes.txt", value, expected_hash=expected)
+            return "written"
+        except ValueError as exc:
+            if "Concurrency conflict" in str(exc):
+                return "conflict"
+            raise
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(write, ("writer-a", "writer-b")))
+
+    assert sorted(results) == ["conflict", "written"]
+    assert path.read_text(encoding="utf-8") in {"writer-a", "writer-b"}
+
+
+def test_list_trash_exposes_deleted_at(workspace):
+    (workspace.root / "notes.txt").write_text("recover me", encoding="utf-8")
+    delete_file_impl(workspace, "notes.txt")
+    entry = json.loads(list_trash_impl(workspace))["entries"][0]
+    assert entry["deleted_at"]
+    assert entry["deleted_at"] == entry["created_at"]
