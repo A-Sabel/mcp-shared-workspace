@@ -32,11 +32,41 @@ $script:lastStatusCheckError = $null
 $script:logOffsets = @{}
 
 function Add-Activity([string]$Text) {
-    $line = '[{0}] {1}' -f (Get-Date -Format 'HH:mm:ss'), $Text
+    $timestamp = Get-Date
+    $category = 'INFO'
+    $categoryColor = if ($script:palette) { $script:palette.Muted } else { [System.Drawing.Color]::Gray }
+    if ($Text -match '(?i)\b(error|failed|exception|critical|traceback|could not|cannot|exited)\b') {
+        $category = 'ERROR'
+        if ($script:palette) { $categoryColor = $script:palette.Danger }
+    } elseif ($Text -match '(?i)\b(warn|waiting|cancelled|timed out|timeout)\b') {
+        $category = 'WARN'
+        if ($script:palette) { $categoryColor = $script:palette.Warning }
+    } elseif ($Text -match '(?i)\b(ngrok|tunnel)\b') {
+        $category = 'TUNNEL'
+        if ($script:palette) { $categoryColor = $script:palette.Info }
+    } elseif ($Text -match '(?i)\b(ready|registered|listening|connected|online|paused|stopped|selected workspace|unregistered|copied)\b') {
+        $category = 'OK'
+        if ($script:palette) { $categoryColor = $script:palette.Success }
+    } elseif ($Text -match '(?i)\b(server|MCP)\b') {
+        $category = 'SERVER'
+        if ($script:palette) { $categoryColor = $script:palette.Info }
+    } elseif ($Text -match '(?i)\b(workspace|project)\b') {
+        $category = 'WORKSPACE'
+        if ($script:palette) { $categoryColor = $script:palette.Muted }
+    }
     if ($script:activity -and -not $script:activity.IsDisposed) {
-        $script:activity.AppendText($line + [Environment]::NewLine)
-        if ($script:activity.Lines.Count -gt 400) {
-            $script:activity.Lines = @($script:activity.Lines | Select-Object -Last 400)
+        $script:activity.SelectionStart = $script:activity.TextLength
+        $script:activity.SelectionLength = 0
+        $script:activity.SelectionColor = $categoryColor
+        $script:activity.AppendText(('[{0}] [{1}]' -f $timestamp.ToString('HH:mm:ss'), $category.PadRight(9)))
+        $script:activity.SelectionColor = $script:palette.Text
+        $script:activity.AppendText((' {0}{1}' -f $Text, [Environment]::NewLine))
+        if ($script:activity.Lines.Count -gt 500) {
+            $removeAt = $script:activity.GetFirstCharIndexFromLine($script:activity.Lines.Count - 400)
+            if ($removeAt -gt 0) {
+                $script:activity.Select(0, $removeAt)
+                $script:activity.SelectedText = ''
+            }
         }
         $script:activity.SelectionStart = $script:activity.TextLength
         $script:activity.ScrollToCaret()
@@ -47,7 +77,7 @@ function Add-Activity([string]$Text) {
         if ((Test-Path -LiteralPath $script:appLog) -and (Get-Item -LiteralPath $script:appLog).Length -ge 2MB) {
             Clear-LogFile $script:appLog
         }
-        Add-Content -LiteralPath $script:appLog -Value ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' ' + $Text)
+        Add-Content -LiteralPath $script:appLog -Value ($timestamp.ToString('yyyy-MM-dd HH:mm:ss') + ' [' + $category + '] ' + $Text)
     } catch { }
 }
 
@@ -322,7 +352,7 @@ function Write-OperationalLogsToActivity {
             $stream.Dispose()
             foreach ($line in $lines) {
                 $important = if ($source.Kind -eq 'ngrok') {
-                    $line -match 'started tunnel|lvl=(eror|crit)|ERR_NGROK'
+                    $line -match 'lvl=(warn|eror|crit)|ERR_NGROK'
                 } elseif ($source.Kind -eq 'server error') {
                     $line -match '(?i)\b(error|exception|traceback|critical|failed)\b'
                 } else {
@@ -603,219 +633,7 @@ function Update-UsageView {
     $script:benchmarkSummary.Text = "Benchmark: $paired paired tasks | $baselineTokens -> $candidateTokens tokens ($change) | pass $baselinePass -> $candidatePass | complete $baselineComplete -> $candidateComplete | fully rated $evaluated"
 }
 
-$form = New-Object System.Windows.Forms.Form
-$form.Text = 'MCP Shared Workspace'
-$form.StartPosition = 'CenterScreen'
-$form.Size = New-Object System.Drawing.Size(900, 740)
-$form.MinimumSize = New-Object System.Drawing.Size(760, 680)
-$form.BackColor = [System.Drawing.Color]::FromArgb(30, 34, 42)
-$form.ForeColor = [System.Drawing.Color]::White
-$form.Font = New-Object System.Drawing.Font('Segoe UI', 10)
-
-$tabs = New-Object System.Windows.Forms.TabControl
-$tabs.Dock = 'Fill'
-$workspaceTab = New-Object System.Windows.Forms.TabPage
-$workspaceTab.Text = 'Workspace'
-$workspaceTab.BackColor = $form.BackColor
-$usageTab = New-Object System.Windows.Forms.TabPage
-$usageTab.Text = 'Usage'
-$usageTab.BackColor = $form.BackColor
-[void]$tabs.TabPages.Add($workspaceTab)
-[void]$tabs.TabPages.Add($usageTab)
-$form.Controls.Add($tabs)
-
-$heading = New-Object System.Windows.Forms.Label
-$heading.Text = 'MCP Shared Workspace'
-$heading.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 18)
-$heading.Location = New-Object System.Drawing.Point(22, 18)
-$heading.Size = New-Object System.Drawing.Size(500, 36)
-$workspaceTab.Controls.Add($heading)
-
-$script:status = New-Object System.Windows.Forms.Label
-$script:status.Text = 'Stopped'
-$script:status.Location = New-Object System.Drawing.Point(24, 62)
-$script:status.Size = New-Object System.Drawing.Size(640, 24)
-$script:status.ForeColor = [System.Drawing.Color]::FromArgb(235, 185, 85)
-$workspaceTab.Controls.Add($script:status)
-
-$script:url = New-Object System.Windows.Forms.Label
-$script:url.Text = 'MCP server URL: loading...'
-$script:url.Location = New-Object System.Drawing.Point(24, 88)
-$script:url.Size = New-Object System.Drawing.Size(640, 22)
-$script:url.ForeColor = [System.Drawing.Color]::FromArgb(135, 190, 245)
-$workspaceTab.Controls.Add($script:url)
-
-$workspaceTitle = New-Object System.Windows.Forms.Label
-$workspaceTitle.Text = 'Project workspace'
-$workspaceTitle.Location = New-Object System.Drawing.Point(24, 116)
-$workspaceTitle.Size = New-Object System.Drawing.Size(180, 22)
-$workspaceTab.Controls.Add($workspaceTitle)
-
-$script:workspaceCombo = New-Object System.Windows.Forms.ComboBox
-$script:workspaceCombo.DropDownStyle = 'DropDownList'
-$script:workspaceCombo.Location = New-Object System.Drawing.Point(24, 140)
-$script:workspaceCombo.Size = New-Object System.Drawing.Size(350, 28)
-$script:workspaceCombo.Add_SelectedIndexChanged({ Update-SelectedWorkspace })
-$workspaceTab.Controls.Add($script:workspaceCombo)
-
-$script:switchButton = New-Object System.Windows.Forms.Button
-$script:switchButton.Text = 'Switch workspace'
-$script:switchButton.Location = New-Object System.Drawing.Point(390, 138)
-$script:switchButton.Size = New-Object System.Drawing.Size(150, 32)
-$script:switchButton.Add_Click({ Switch-SelectedWorkspace })
-$workspaceTab.Controls.Add($script:switchButton)
-
-$script:workspacePathLabel = New-Object System.Windows.Forms.Label
-$script:workspacePathLabel.Location = New-Object System.Drawing.Point(24, 171)
-$script:workspacePathLabel.Size = New-Object System.Drawing.Size(640, 20)
-$script:workspacePathLabel.ForeColor = [System.Drawing.Color]::FromArgb(155, 165, 180)
-$workspaceTab.Controls.Add($script:workspacePathLabel)
-
-$nameLabel = New-Object System.Windows.Forms.Label
-$nameLabel.Text = 'Name'
-$nameLabel.Location = New-Object System.Drawing.Point(24, 194)
-$nameLabel.Size = New-Object System.Drawing.Size(170, 20)
-$workspaceTab.Controls.Add($nameLabel)
-$script:workspaceName = New-Object System.Windows.Forms.TextBox
-$script:workspaceName.Location = New-Object System.Drawing.Point(24, 214)
-$script:workspaceName.Size = New-Object System.Drawing.Size(170, 26)
-$workspaceTab.Controls.Add($script:workspaceName)
-
-$pathLabel = New-Object System.Windows.Forms.Label
-$pathLabel.Text = 'Project folder'
-$pathLabel.Location = New-Object System.Drawing.Point(204, 194)
-$pathLabel.Size = New-Object System.Drawing.Size(350, 20)
-$workspaceTab.Controls.Add($pathLabel)
-$script:workspacePathInput = New-Object System.Windows.Forms.TextBox
-$script:workspacePathInput.Location = New-Object System.Drawing.Point(204, 214)
-$script:workspacePathInput.Size = New-Object System.Drawing.Size(350, 26)
-$workspaceTab.Controls.Add($script:workspacePathInput)
-
-$browseButton = New-Object System.Windows.Forms.Button
-$browseButton.Text = 'Browse...'
-$browseButton.Location = New-Object System.Drawing.Point(564, 212)
-$browseButton.Size = New-Object System.Drawing.Size(100, 30)
-$browseButton.Add_Click({
-    $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-    if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $script:workspacePathInput.Text = $dialog.SelectedPath }
-    $dialog.Dispose()
-})
-$workspaceTab.Controls.Add($browseButton)
-
-$registerButton = New-Object System.Windows.Forms.Button
-$registerButton.Text = 'Register folder'
-$registerButton.Location = New-Object System.Drawing.Point(24, 246)
-$registerButton.Size = New-Object System.Drawing.Size(130, 32)
-$registerButton.Add_Click({
-    try { Register-WorkspaceFromForm }
-    catch { Add-Activity "REGISTER ERROR: $($_.Exception.Message)" }
-})
-$workspaceTab.Controls.Add($registerButton)
-
-$script:startButton = New-Object System.Windows.Forms.Button
-$script:startButton.Text = 'Start'
-$script:startButton.Location = New-Object System.Drawing.Point(24, 290)
-$script:startButton.Size = New-Object System.Drawing.Size(110, 38)
-$script:startButton.Add_Click({ Start-Workspace })
-$workspaceTab.Controls.Add($script:startButton)
-
-$script:pauseButton = New-Object System.Windows.Forms.Button
-$script:pauseButton.Text = 'Pause'
-$script:pauseButton.Location = New-Object System.Drawing.Point(146, 290)
-$script:pauseButton.Size = New-Object System.Drawing.Size(110, 38)
-$script:pauseButton.Enabled = $false
-$script:pauseButton.Add_Click({ Stop-Workspace $false })
-$workspaceTab.Controls.Add($script:pauseButton)
-
-$exitButton = New-Object System.Windows.Forms.Button
-$exitButton.Text = 'Exit'
-$exitButton.Location = New-Object System.Drawing.Point(268, 290)
-$exitButton.Size = New-Object System.Drawing.Size(110, 38)
-$exitButton.Add_Click({ $form.Close() })
-$workspaceTab.Controls.Add($exitButton)
-
-$logTitle = New-Object System.Windows.Forms.Label
-$logTitle.Text = 'Activity'
-$logTitle.Location = New-Object System.Drawing.Point(24, 330)
-$logTitle.Size = New-Object System.Drawing.Size(200, 24)
-$workspaceTab.Controls.Add($logTitle)
-
-$script:activity = New-Object System.Windows.Forms.TextBox
-$script:activity.Multiline = $true
-$script:activity.ReadOnly = $true
-$script:activity.ScrollBars = 'Vertical'
-$script:activity.BackColor = [System.Drawing.Color]::FromArgb(18, 21, 27)
-$script:activity.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 232)
-$script:activity.Font = New-Object System.Drawing.Font('Consolas', 9)
-$script:activity.Anchor = 'Top,Bottom,Left,Right'
-$script:activity.Location = New-Object System.Drawing.Point(24, 358)
-$script:activity.Size = New-Object System.Drawing.Size(836, 320)
-$workspaceTab.Controls.Add($script:activity)
-
-$auditPathSetting = [string]$env:LOG_PATH
-if (-not $auditPathSetting) {
-    foreach ($line in (Get-Content -LiteralPath $script:envPath -ErrorAction SilentlyContinue)) {
-        if ($line -match '^\s*LOG_PATH\s*=\s*(.*?)\s*$') { $auditPathSetting = $Matches[1].Trim('"').Trim("'"); break }
-    }
-}
-if (-not $auditPathSetting) { $auditPathSetting = 'logs/tool_calls.jsonl' }
-$script:toolAuditLog = if ([IO.Path]::IsPathRooted($auditPathSetting)) { $auditPathSetting } else { Join-Path $script:repo $auditPathSetting }
-$script:benchmarkCsv = Join-Path $script:repo 'benchmarks\results.csv'
-$usageHeading = New-Object System.Windows.Forms.Label
-$usageHeading.Text = 'Tool usage and token efficiency'
-$usageHeading.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 16)
-$usageHeading.Location = New-Object System.Drawing.Point(20, 20)
-$usageHeading.Size = New-Object System.Drawing.Size(700, 32)
-$usageTab.Controls.Add($usageHeading)
-
-$script:usageTotals = New-Object System.Windows.Forms.Label
-$script:usageTotals.Location = New-Object System.Drawing.Point(22, 60)
-$script:usageTotals.Size = New-Object System.Drawing.Size(820, 42)
-$script:usageTotals.ForeColor = [System.Drawing.Color]::FromArgb(190, 200, 214)
-$usageTab.Controls.Add($script:usageTotals)
-
-$refreshUsage = New-Object System.Windows.Forms.Button
-$refreshUsage.Text = 'Refresh'
-$refreshUsage.Location = New-Object System.Drawing.Point(22, 108)
-$refreshUsage.Size = New-Object System.Drawing.Size(100, 32)
-$usageTab.Controls.Add($refreshUsage)
-
-$script:usageGrid = New-Object System.Windows.Forms.DataGridView
-$script:usageGrid.Location = New-Object System.Drawing.Point(22, 152)
-$script:usageGrid.Size = New-Object System.Drawing.Size(830, 300)
-$script:usageGrid.Anchor = 'Top,Bottom,Left,Right'
-$script:usageGrid.ReadOnly = $true
-$script:usageGrid.AllowUserToAddRows = $false
-$script:usageGrid.AllowUserToDeleteRows = $false
-$script:usageGrid.AllowUserToResizeRows = $false
-$script:usageGrid.RowHeadersVisible = $false
-$script:usageGrid.AutoSizeColumnsMode = 'Fill'
-$script:usageGrid.BackgroundColor = [System.Drawing.Color]::FromArgb(18, 21, 27)
-$script:usageGrid.ForeColor = [System.Drawing.Color]::FromArgb(30, 34, 42)
-$script:usageGrid.ColumnHeadersDefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(45, 52, 64)
-$script:usageGrid.ColumnHeadersDefaultCellStyle.ForeColor = [System.Drawing.Color]::White
-$script:usageGrid.EnableHeadersVisualStyles = $false
-foreach ($column in @(@('Tool', 'Tool'), @('Calls', 'Calls'), @('Success', 'Success'), @('Failed', 'Failed'), @('Bytes', 'Result bytes'), @('Chunks', 'Read chunks'), @('Lines', 'Lines read'), @('More', 'Has more'))) {
-    [void]$script:usageGrid.Columns.Add([string]$column[0], [string]$column[1])
-}
-$usageTab.Controls.Add($script:usageGrid)
-
-$script:benchmarkSummary = New-Object System.Windows.Forms.Label
-$script:benchmarkSummary.Location = New-Object System.Drawing.Point(22, 466)
-$script:benchmarkSummary.Size = New-Object System.Drawing.Size(830, 70)
-$script:benchmarkSummary.Anchor = 'Bottom,Left,Right'
-$script:benchmarkSummary.ForeColor = [System.Drawing.Color]::FromArgb(190, 200, 214)
-$usageTab.Controls.Add($script:benchmarkSummary)
-
-$benchmarkHint = New-Object System.Windows.Forms.Label
-$benchmarkHint.Text = 'Enter actual model input/output token counts and pass/completeness ratings in benchmarks/results.csv, then refresh.'
-$benchmarkHint.Location = New-Object System.Drawing.Point(22, 540)
-$benchmarkHint.Size = New-Object System.Drawing.Size(830, 42)
-$benchmarkHint.Anchor = 'Bottom,Left,Right'
-$benchmarkHint.ForeColor = [System.Drawing.Color]::FromArgb(145, 158, 178)
-$usageTab.Controls.Add($benchmarkHint)
-$refreshUsage.Add_Click({ Update-UsageView })
-$tabs.Add_SelectedIndexChanged({ if ($tabs.SelectedTab -eq $usageTab) { Update-UsageView } })
+. (Join-Path $PSScriptRoot 'ui\main-form.ps1')
 
 $script:statusTimer = New-Object System.Windows.Forms.Timer
 $script:statusTimer.Interval = 5000
@@ -846,7 +664,7 @@ $script:statusTimer.Add_Tick({
         if ($isOnline) {
             if (-not $script:tunnelOnline) { Add-Activity ('Tunnel connected: ' + $expectedUrl) }
             $script:tunnelOnline = $true
-            Set-Status $true ('Online - ' + $expectedUrl)
+            Set-Status $true 'Online'
             $script:url.Text = 'MCP server URL: ' + $expectedUrl + '/mcp'
         } else {
             $script:tunnelOnline = $false
@@ -855,7 +673,7 @@ $script:statusTimer.Add_Tick({
     } catch {
         # Keep a confirmed online state through a transient local API timeout.
         if ($script:tunnelOnline) {
-            $script:status.Text = 'Online - https://' + $script:hostname
+            $script:status.Text = 'Online'
         } else {
             $script:status.Text = 'Waiting for ngrok...'
         }

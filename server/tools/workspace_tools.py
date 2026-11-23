@@ -35,6 +35,14 @@ def register(mcp: MCPServer, registry: WorkspaceRegistry, log_path: Path) -> Non
         """Switch all workspace file tools to a registered project directory."""
         return registry.switch(name)
 
+    @audited(tool_name="delete_workspace", role="workspace-client", log_path=log_path, summarize=_summary)
+    def delete_workspace(
+        name: Annotated[str, Field(min_length=1, max_length=64, description="Name returned by list_workspaces.")],
+    ) -> str:
+        """Unregister a workspace without deleting its project directory or files."""
+        return registry.delete(name)
+
     mcp.add_tool(list_workspaces, name="list_workspaces", structured_output=False)
     mcp.add_tool(register_workspace, name="register_workspace", structured_output=False)
     mcp.add_tool(switch_workspace, name="switch_workspace", structured_output=False)
+    mcp.add_tool(delete_workspace, name="delete_workspace", structured_output=False)

@@ -69,6 +69,17 @@ class WorkspaceRegistry:
         self._save()
         return f"Registered workspace {name!r}."
 
+    def delete(self, name: str) -> str:
+        name = self._validate_name(name)
+        root = self.entries.get(name)
+        if root is None:
+            raise ValueError(f"Workspace {name!r} is not registered. Use list_workspaces.")
+        if name.casefold() == "default" or root == self.sandbox.root:
+            raise ValueError("The default or currently active workspace cannot be removed.")
+        del self.entries[name]
+        self._save()
+        return f"Unregistered workspace {name!r}. Its project directory and files were not deleted."
+
     def switch(self, name: str) -> str:
         name = self._validate_name(name)
         root = self.entries.get(name)

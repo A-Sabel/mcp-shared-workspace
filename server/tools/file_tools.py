@@ -297,8 +297,12 @@ def list_files_impl(
 
 READ_FILE_DESCRIPTION = (
     "Read a workspace-relative file in bounded line chunks. For one chunk, "
-    "provide path, start_line, and optionally end_line; the default is at most "
-    "200 lines. When you already know more context is needed, use ranges to "
+    "provide path, start_line, and optionally end_line. Line numbers are "
+    "one-based and inclusive; every range may contain at most 200 lines. "
+    "If a requested range is too large, split it into chunks of 200 lines or "
+    "fewer and continue from next_start_line. Paths are relative to the active "
+    "workspace; if a path is missing, use list_files rather than guessing. "
+    "When you already know more context is needed, use ranges to "
     "request up to five chunks/files in one call. For sequential chunks of the "
     "same file, set each range's start to the prior chunk's next_start_line. "
     "By default the server stops after the requested range and one-line "
@@ -414,16 +418,31 @@ def register(
             path: Annotated[
                 str,
                 Field(
-                    description="Workspace-relative file path for a single chunk.",
+                    description=(
+                        "Path relative to the active workspace. Discover valid "
+                        "paths with list_files; do not use local absolute paths."
+                    ),
                 ),
             ] = None,
             start_line: Annotated[
                 int,
-                Field(ge=1, description="One-based first line; defaults to 1."),
+                Field(
+                    ge=1,
+                    description=(
+                        "One-based inclusive first line. Each read range can be "
+                        "at most 200 lines; continue with next_start_line."
+                    ),
+                ),
             ] = 1,
             end_line: Annotated[
                 int,
-                Field(ge=1, description="One-based inclusive last line; defaults to at most 200 lines."),
+                Field(
+                    ge=1,
+                    description=(
+                        "One-based inclusive last line. Keep end_line-start_line+1 "
+                        "at or below 200; use next_start_line for later chunks."
+                    ),
+                ),
             ] = None,
             ranges: Annotated[
                 list[ReadRange],
@@ -538,16 +557,24 @@ def read_file_impl(
 
         if spec.end - spec.start + 1 > MAX_READ_LINES:
             raise ValueError(
-                f"Range {index}: at most {MAX_READ_LINES} lines are allowed."
+                f"Range {index}: at most {MAX_READ_LINES} lines are allowed. "
+                "Split the request into chunks of 200 lines or fewer, then "
+                "continue from next_start_line."
             )
 
         path = sandbox.resolve(spec.path)
 
         if not path.exists():
-            raise ValueError(f"Range {index}: file {spec.path!r} does not exist.")
+            raise ValueError(
+                f"Range {index}: file {spec.path!r} does not exist in the active "
+                "workspace. Use list_files to discover the correct relative path."
+            )
 
         if not path.is_file():
-            raise ValueError(f"Range {index}: path {spec.path!r} is not a file.")
+            raise ValueError(
+                f"Range {index}: path {spec.path!r} is not a file. "
+                "Use list_files to inspect workspace paths."
+            )
 
         try:
             with path.open("r", encoding="utf-8") as stream:
@@ -603,13 +630,23 @@ def read_file_result_impl(
         if spec.end < spec.start:
             raise ValueError(f"Range {index}: end must be greater than or equal to start.")
         if spec.end - spec.start + 1 > MAX_READ_LINES:
-            raise ValueError(f"Range {index}: at most {MAX_READ_LINES} lines are allowed.")
+            raise ValueError(
+                f"Range {index}: at most {MAX_READ_LINES} lines are allowed. "
+                "Split the request into chunks of 200 lines or fewer, then "
+                "continue from next_start_line."
+            )
 
         file_path = sandbox.resolve(spec.path)
         if not file_path.exists():
-            raise ValueError(f"Range {index}: file {spec.path!r} does not exist.")
+            raise ValueError(
+                f"Range {index}: file {spec.path!r} does not exist in the active "
+                "workspace. Use list_files to discover the correct relative path."
+            )
         if not file_path.is_file():
-            raise ValueError(f"Range {index}: path {spec.path!r} is not a file.")
+            raise ValueError(
+                f"Range {index}: path {spec.path!r} is not a file. "
+                "Use list_files to inspect workspace paths."
+            )
 
         lines: list[str] = []
         returned_end = spec.start - 1

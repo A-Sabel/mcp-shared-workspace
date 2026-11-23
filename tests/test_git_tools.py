@@ -5,7 +5,7 @@ import subprocess
 import pytest
 
 from server.sandbox import Sandbox, SandboxError
-from server.tools.git_tools import git_status_impl, git_diff_impl, git_commit_impl
+from server.tools.git_tools import git_status_impl, git_diff_impl, git_commit_impl, git_log_impl
 
 @pytest.fixture
 def git_ws(tmp_path):
@@ -350,3 +350,34 @@ def test_non_git_workspace_is_rejected_for_commit(tmp_path):
             "Test commit",
             ["example.txt"],
         )
+
+
+def test_git_log_returns_recent_commit_subject_and_files(git_ws):
+    path = git_ws.root / "history.txt"
+    path.write_text("first\n", encoding="utf-8")
+    git_commit_impl(git_ws, "Add history file", ["history.txt"])
+    result = git_log_impl(git_ws, limit=5, include_files=True)
+    assert "Add history file" in result
+    assert "history.txt" in result
+    assert "A" in result
+
+
+def test_git_log_can_omit_changed_files(git_ws):
+    path = git_ws.root / "history.txt"
+    path.write_text("first\n", encoding="utf-8")
+    git_commit_impl(git_ws, "Add history file", ["history.txt"])
+    result = git_log_impl(git_ws, limit=1, include_files=False)
+    assert "Add history file" in result
+    assert "history.txt" not in result
+
+
+def test_git_log_rejects_invalid_limit(git_ws):
+    with pytest.raises(ValueError, match="limit must be between"):
+        git_log_impl(git_ws, limit=0)
+
+
+def test_git_log_rejects_non_git_workspace(tmp_path):
+    root = tmp_path / "workspace"
+    root.mkdir()
+    with pytest.raises(SandboxError, match="not a Git repository"):
+        git_log_impl(Sandbox(root))

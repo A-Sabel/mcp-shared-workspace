@@ -24,6 +24,40 @@ from server.tools.schema_utils import set_explicit_required, set_property_type
 MAX_COMMIT_MESSAGE_CHARS = 200
 MAX_COMMIT_PATHS = 50
 
+MAX_LOG_COMMITS = 20
+
+
+def git_log_impl(sandbox: Sandbox, limit: int = 10, include_files: bool = True) -> str:
+    """Return bounded recent commit history with optional changed-file summaries."""
+    if not (sandbox.root / ".git").exists():
+        raise SandboxError(
+            "Workspace is not a Git repository. Initialize Git before using git_log."
+        )
+    if not 1 <= limit <= MAX_LOG_COMMITS:
+        raise ValueError(f"limit must be between 1 and {MAX_LOG_COMMITS}.")
+    args = [
+        "log",
+        f"--max-count={limit}",
+        "--date=short",
+        "--pretty=format:%h%x09%ad%x09%s",
+    ]
+    if include_files:
+        args.append("--name-status")
+    result = _run_git(sandbox, args)
+    if result.returncode != 0:
+        detail = _bounded_output(result.stdout, result.stderr)
+        raise ValueError(f"git log failed{': ' + detail if detail else '.'}")
+    output = result.stdout.strip()
+    if not output:
+        return "No commits found."
+    return _bounded_output(output, "") or "No commits found."
+
+
+GIT_LOG_DESCRIPTION = (
+    "Show recent Git commits with short hash, date, subject, and optionally changed-file "
+    "summaries. Results are limited to at most 20 commits and bounded output."
+)
+
 
 def _run_git(
     sandbox: Sandbox,
@@ -348,5 +382,28 @@ def register(
         git_commit,
         name="git_commit",
         description=GIT_COMMIT_DESCRIPTION,
+        structured_output=False,
+    )
+
+    @audited(
+        tool_name="git_log",
+        role=client_id,
+        log_path=log_path,
+        summarize=lambda _a, kw: {
+            "limit": kw.get("limit"),
+            "include_files": kw.get("include_files"),
+        },
+    )
+    def git_log(
+        limit: Annotated[int, Field(ge=1, le=MAX_LOG_COMMITS, description="Maximum number of recent commits.")] = 10,
+        include_files: Annotated[bool, Field(description="Include changed-file names and status codes.")] = True,
+    ) -> str:
+        """Show recent commits and compact changed-file summaries."""
+        return git_log_impl(sandbox, limit, include_files)
+
+    mcp.add_tool(
+        git_log,
+        name="git_log",
+        description=GIT_LOG_DESCRIPTION,
         structured_output=False,
     )
