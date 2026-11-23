@@ -12,7 +12,9 @@ authenticates that same profile and grants access to all workspace tools. The
 server enforces authentication and sandbox checks on every operation.
 
 Every filesystem path passes through the sandbox. Protected names, traversal,
-symlink escapes, oversized reads/writes, and unsafe Git arguments are rejected.
+symlink escapes, over-limit writes, and unsafe Git arguments are rejected.
+File reads are capped per chunk and by response size, with continuation metadata
+for the remaining content.
 The known hard-link and TOCTOU limitations are recorded in [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Tools

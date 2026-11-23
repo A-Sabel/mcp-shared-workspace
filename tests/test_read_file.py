@@ -79,10 +79,6 @@ def test_range_start_past_eof_has_explicit_empty_result(sandbox):
             "At most 5 ranges",
         ),
         (
-            [{"path": "one.txt", "start": 1, "end": MAX_READ_LINES + 1}],
-            "at most 200 lines",
-        ),
-        (
             [{"path": "one.txt", "start": 3, "end": 2}],
             "end must be greater than or equal",
         ),
@@ -101,6 +97,38 @@ def test_invalid_ranges_fail_cleanly(sandbox, ranges, message):
 def test_ranges_must_be_a_list(sandbox):
     with pytest.raises(ValueError, match="ranges must be a list"):
         read_file_impl(sandbox, {"path": "one.txt", "start": 1, "end": 1}) # type: ignore
+
+
+def test_oversized_range_is_capped_with_a_continuation_marker(sandbox):
+    content = "".join(f"line {line}\n" for line in range(1, MAX_READ_LINES + 51))
+    (sandbox.root / "large.txt").write_text(content, encoding="utf-8")
+
+    result = read_file_impl(
+        sandbox,
+        [{"path": "large.txt", "start": 1, "end": MAX_READ_LINES + 50}],
+    )
+
+    assert result.startswith(f"large.txt:1-{MAX_READ_LINES}\n")
+    assert f"continue from line {MAX_READ_LINES + 1}" in result
+    assert f"{MAX_READ_LINES}: line {MAX_READ_LINES}" in result
+    assert f"{MAX_READ_LINES + 1}: line {MAX_READ_LINES + 1}" not in result
+
+
+def test_oversized_result_reports_requested_end_and_next_chunk(sandbox):
+    content = "".join(f"line {line}\n" for line in range(1, MAX_READ_LINES + 51))
+    (sandbox.root / "large.txt").write_text(content, encoding="utf-8")
+
+    response = read_file_result_impl(
+        sandbox,
+        [{"path": "large.txt", "start": 1, "end": MAX_READ_LINES + 50}],
+    )
+    result = json.loads(response)["ranges"][0]
+
+    assert result["start_line"] == 1
+    assert result["end_line"] == MAX_READ_LINES
+    assert result["requested_end_line"] == MAX_READ_LINES + 50
+    assert result["has_more"] is True
+    assert result["next_start_line"] == MAX_READ_LINES + 1
 
 
 @pytest.mark.parametrize("path", ["missing.txt", "subdir"])

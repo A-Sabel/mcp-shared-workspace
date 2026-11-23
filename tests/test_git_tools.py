@@ -428,7 +428,8 @@ def test_git_restore_requires_explicit_confirmation_and_preview(git_ws):
     preview = git_restore_impl(git_ws, ["file.txt"], dry_run=True)
     assert "DRY RUN" in preview
     with pytest.raises(ValueError, match="confirm=true"):
-        git_restore_impl(git_ws, ["file.txt"], confirm=False, dry_run=False)
+        git_restore_impl(git_ws, ["file.txt"], dry_run=False)
+    assert path.read_text(encoding="utf-8") == "changed\n"
     git_restore_impl(git_ws, ["file.txt"], confirm=True, dry_run=False)
     assert path.read_text(encoding="utf-8") == "original\n"
 
@@ -448,6 +449,26 @@ def test_git_stash_pop_retains_stash_when_apply_conflicts(git_ws):
     assert "stash@{0}" in git_stash_impl(git_ws, "list")
     with pytest.raises(ValueError, match="stash retained"):
         git_stash_impl(git_ws, "pop")
+    assert "stash@{0}" in git_stash_impl(git_ws, "list")
+
+
+@pytest.mark.parametrize("action", ["apply", "pop"])
+def test_git_stash_refuses_to_apply_with_dirty_worktree(git_ws, action):
+    stashed = git_ws.root / "stashed.txt"
+    local = git_ws.root / "local.txt"
+    stashed.write_text("base\n", encoding="utf-8")
+    local.write_text("base\n", encoding="utf-8")
+    git_commit_impl(git_ws, "initial", ["stashed.txt", "local.txt"])
+
+    stashed.write_text("from stash\n", encoding="utf-8")
+    git_stash_impl(git_ws, "push", message="pending change")
+    local.write_text("uncommitted local change\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="working tree has staged, unstaged, or untracked changes"):
+        git_stash_impl(git_ws, action)
+
+    assert local.read_text(encoding="utf-8") == "uncommitted local change\n"
+    assert stashed.read_text(encoding="utf-8") == "base\n"
     assert "stash@{0}" in git_stash_impl(git_ws, "list")
 
 

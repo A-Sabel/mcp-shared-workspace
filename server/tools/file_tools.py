@@ -342,9 +342,9 @@ def list_files_impl(
 READ_FILE_DESCRIPTION = (
     "Read a workspace-relative file in bounded line chunks and return its SHA-256 hash for optimistic concurrency checks. For one chunk, "
     "provide path, start_line, and optionally end_line. Line numbers are "
-    "one-based and inclusive; every range may contain at most 200 lines. "
-    "If a requested range is too large, split it into chunks of 200 lines or "
-    "fewer and continue from next_start_line. Paths are relative to the active "
+    "one-based and inclusive; the server returns at most 200 lines per range. "
+    "Oversized ranges are capped automatically; check requested_end_line, "
+    "has_more, and next_start_line to continue. Paths are relative to the active "
     "workspace; if a path is missing, use list_files rather than guessing. "
     "When you already know more context is needed, use ranges to "
     "request up to five chunks/files in one call. For sequential chunks of the "
@@ -472,10 +472,7 @@ def register(
                 int,
                 Field(
                     ge=1,
-                    description=(
-                        "One-based inclusive first line. Each read range can be "
-                        "at most 200 lines; continue with next_start_line."
-                    ),
+                    description="One-based inclusive first line.",
                 ),
             ] = 1,
             end_line: Annotated[
@@ -483,8 +480,8 @@ def register(
                 Field(
                     ge=1,
                     description=(
-                        "One-based inclusive last line. Keep end_line-start_line+1 "
-                        "at or below 200; use next_start_line for later chunks."
+                        "One-based inclusive last line. Requests over 200 lines "
+                        "are capped; continue with next_start_line."
                     ),
                 ),
             ] = None,
@@ -494,8 +491,9 @@ def register(
                     min_length=1,
                     max_length=MAX_READ_RANGES,
                     description=(
-                        "Optional list of up to five {path, start, end} chunks. "
-                        "Use multiple ranges to batch chunks you already know "
+                        "Optional list of up to five {path, start, end} chunks; "
+                        "each oversized chunk is capped at 200 lines. Use multiple "
+                        "ranges to batch chunks you already know "
                         "are needed; for sequential chunks, continue from each "
                         "prior result's next_start_line."
                     ),
@@ -599,12 +597,8 @@ def read_file_impl(
                 f"Range {index}: end must be greater than or equal to start."
             )
 
-        if spec.end - spec.start + 1 > MAX_READ_LINES:
-            raise ValueError(
-                f"Range {index}: at most {MAX_READ_LINES} lines are allowed. "
-                "Split the request into chunks of 200 lines or fewer, then "
-                "continue from next_start_line."
-            )
+        requested_end = spec.end
+        effective_end = min(spec.end, spec.start + MAX_READ_LINES - 1)
 
         path = sandbox.resolve(spec.path)
 
@@ -625,7 +619,7 @@ def read_file_impl(
                 selected: list[str] = []
 
                 for line_number, line in enumerate(stream, start=1):
-                    if line_number > spec.end:
+                    if line_number > effective_end:
                         break
 
                     if line_number >= spec.start:
@@ -647,7 +641,13 @@ def read_file_impl(
 
         content = "\n".join(selected) if selected else "(no lines in requested range)"
 
-        sections.append(f"{spec.path}:{spec.start}-{spec.end}\n{content}")
+        section = f"{spec.path}:{spec.start}-{effective_end}\n{content}"
+        if effective_end < requested_end:
+            section += (
+                f"\n[requested through line {requested_end}; capped at "
+                f"{MAX_READ_LINES} lines, continue from line {effective_end + 1}]"
+            )
+        sections.append(section)
 
     return "\n\n".join(sections)
 
@@ -682,12 +682,8 @@ def read_file_result_impl(
             raise ValueError(f"Invalid range {index}: {exc}") from None
         if spec.end < spec.start:
             raise ValueError(f"Range {index}: end must be greater than or equal to start.")
-        if spec.end - spec.start + 1 > MAX_READ_LINES:
-            raise ValueError(
-                f"Range {index}: at most {MAX_READ_LINES} lines are allowed. "
-                "Split the request into chunks of 200 lines or fewer, then "
-                "continue from next_start_line."
-            )
+        requested_end = spec.end
+        effective_end = min(spec.end, spec.start + MAX_READ_LINES - 1)
 
         file_path = sandbox.resolve(spec.path)
         if not file_path.exists():
@@ -713,7 +709,7 @@ def read_file_result_impl(
                     line_count = line_number
                     if line_number < spec.start:
                         continue
-                    if line_number > spec.end:
+                    if line_number > effective_end:
                         # One-line lookahead proves there is unread content.
                         has_more = True
                         if not count_total_lines:
@@ -760,7 +756,7 @@ def read_file_result_impl(
                 "sha256": sha256,
                 "start_line": spec.start,
                 "end_line": returned_end if returned_end >= spec.start else None,
-                "requested_end_line": spec.end,
+                "requested_end_line": requested_end,
                 "total_lines": total_lines,
                 "has_more": has_more,
                 "next_start_line": returned_end + 1 if has_more else None,

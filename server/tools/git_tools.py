@@ -418,6 +418,18 @@ def _validate_stash_ref(ref: str) -> str:
     return ref
 
 
+def _require_clean_worktree_for_stash_apply(sandbox: Sandbox) -> None:
+    """Refuse stash application while local changes could be overwritten."""
+    status = _run_git(sandbox, ["status", "--porcelain", "--untracked-files=all"])
+    if status.returncode != 0:
+        raise ValueError("Unable to check working-tree state before applying stash.")
+    if status.stdout.strip():
+        raise ValueError(
+            "Cannot apply or pop a stash while the working tree has staged, "
+            "unstaged, or untracked changes. Commit or stash those changes first."
+        )
+
+
 def git_stash_impl(sandbox: Sandbox, action: str, include_untracked: bool = False,
                    message: str = "MCP workspace stash", stash_ref: str = "stash@{0}",
                    confirm: bool = False) -> str:
@@ -436,9 +448,11 @@ def git_stash_impl(sandbox: Sandbox, action: str, include_untracked: bool = Fals
                 raise ValueError("Dropping a stash is destructive; require confirm=true.")
             result = _run_git(sandbox, ["stash", "drop", ref])
         elif action == "apply":
+            _require_clean_worktree_for_stash_apply(sandbox)
             result = _run_git(sandbox, ["stash", "apply", ref])
         else:
             # Apply first; retain the stash whenever applying fails or conflicts.
+            _require_clean_worktree_for_stash_apply(sandbox)
             applied = _run_git(sandbox, ["stash", "apply", ref])
             if applied.returncode != 0:
                 detail = _bounded_output(applied.stdout, applied.stderr)
