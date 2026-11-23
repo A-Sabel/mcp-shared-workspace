@@ -1,6 +1,7 @@
 """Tests for bounded, sandboxed read_file ranges."""
 
 import asyncio
+import hashlib
 import json
 from pathlib import Path
 
@@ -192,3 +193,16 @@ def test_read_file_is_registered_for_authenticated_client(tmp_path):
 
     names = {tool.name for tool in asyncio.run(mcp.list_tools())}
     assert "read_file" in names
+
+def test_read_file_result_includes_sha256_for_concurrency_guard(sandbox):
+    result = json.loads(
+        read_file_result_impl(
+            sandbox,
+            [{"path": "one.txt", "start": 1, "end": 2}],
+        )
+    )
+
+    assert result["ranges"][0]["sha256"] == hashlib.sha256(
+        (sandbox.root / "one.txt").read_bytes()
+    ).hexdigest()
+

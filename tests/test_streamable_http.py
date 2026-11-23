@@ -258,10 +258,42 @@ def test_authenticated_client_sees_all_tools(tmp_path: Path):
             "get_workspace_context",
             "get_file_outline",
             "get_project_map",
+            "get_change_impact",
             "run_project_checks",
+            "move_file",
+            "create_directory",
+            "read_state",
+            "archive_state",
+            "compact_state",
+            "read_audit_log",
+            "apply_patch",
+            "find_symbol",
+            "find_references",
+            "git_list_branches",
+            "git_create_branch",
+            "git_switch_branch",
         }
 
         assert names == expected_tools
+
+        schemas = {tool["name"]: tool["inputSchema"] for tool in tools}
+        read_schema = schemas["read_file"]
+        assert read_schema["properties"]["path"]["type"] == "string"
+        assert read_schema["properties"]["ranges"]["type"] == "array"
+        assert read_schema.get("oneOf") or "path" in read_schema.get("required", [])
+        assert schemas["git_diff"]["properties"]["mode"]["type"] == "string"
+        assert schemas["write_file"]["properties"]["expected_hash"]["type"] == "string"
+        assert schemas["str_replace"]["properties"]["expected_hash"]["type"] == "string"
+        assert schemas["get_change_impact"]["properties"]["target"]["type"] == "string"
+        assert schemas["move_file"]["properties"]["source"]["type"] == "string"
+        assert schemas["create_directory"]["properties"]["path"]["type"] == "string"
+        assert schemas["read_state"]["properties"]["limit"]["maximum"] == 100
+        assert schemas["read_audit_log"]["properties"]["limit"]["maximum"] == 200
+        assert schemas["apply_patch"]["properties"]["patch"]["type"] == "string"
+        assert schemas["find_symbol"]["properties"]["symbol"]["type"] == "string"
+        assert schemas["find_references"]["properties"]["symbol"]["type"] == "string"
+        assert schemas["git_create_branch"]["properties"]["branch_name"]["type"] == "string"
+        assert schemas["git_switch_branch"]["properties"]["branch_name"]["type"] == "string"
 
 
 def test_invalid_token_cannot_initialize(tmp_path: Path):

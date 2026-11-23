@@ -12,6 +12,7 @@ from server.audit_summaries import (
 from server.audited_tool import audited
 
 import subprocess
+import re
 from typing import Annotated
 
 from mcp.server.mcpserver import MCPServer
@@ -134,44 +135,50 @@ def git_status_impl(sandbox: Sandbox) -> str:
 def git_diff_impl(
     sandbox: Sandbox,
     path: str | None = None,
+    mode: str = "unstaged",
 ) -> str:
-    """Return a bounded Git diff for the workspace."""
+    """Return a bounded staged, unstaged, or combined Git diff."""
     if not (sandbox.root / ".git").exists():
         raise SandboxError(
             "Workspace is not a Git repository. "
             "Initialize Git in the workspace before using git_diff."
         )
 
-    args = [
-        "diff",
-        "--no-ext-diff",
-        "--unified=3",
-    ]
+    if mode not in {"unstaged", "staged", "both"}:
+        raise ValueError("mode must be 'unstaged', 'staged', or 'both'.")
 
+    path_args: list[str] = []
     if path is not None:
-        # Validate the requested path through the sandbox before giving it
-        # to Git. Git receives it as a separate argument, never through a shell.
         safe_path = sandbox.resolve(path)
-        relative_path = sandbox.relative(safe_path)
-        args.extend(["--", relative_path])
+        path_args = ["--", sandbox.relative(safe_path)]
     else:
-        args.append("--")
+        path_args = ["--"]
 
-    result = _run_git(sandbox, args)
+    diff_args = ["diff", "--no-ext-diff", "--unified=3"]
+    if mode == "both":
+        sections: list[str] = []
+        for section, extra_args in (
+            ("staged", ["--cached"]),
+            ("unstaged", []),
+        ):
+            result = _run_git(sandbox, [*diff_args, *extra_args, *path_args])
+            if result.returncode != 0:
+                detail = _bounded_output(result.stdout, result.stderr)
+                raise ValueError(f"git diff failed{': ' + detail if detail else '.'}")
+            section_output = result.stdout.strip()
+            if section_output:
+                sections.append(f"## {section} changes\n{section_output}")
+        output = _bounded_output("\n\n".join(sections), "")
+        return output or "No both changes."
 
+    extra_args = ["--cached"] if mode == "staged" else []
+    result = _run_git(sandbox, [*diff_args, *extra_args, *path_args])
     if result.returncode != 0:
-        detail = _bounded_output(
-            result.stdout,
-            result.stderr,
-        )
-        raise ValueError(f"git diff failed" f"{f': {detail}' if detail else '.'}")
+        detail = _bounded_output(result.stdout, result.stderr)
+        raise ValueError(f"git diff failed{': ' + detail if detail else '.'}")
 
-    output = _bounded_output(
-        result.stdout,
-        result.stderr,
-    )
-
-    return output or "No unstaged changes."
+    output = _bounded_output(result.stdout, result.stderr)
+    return output or f"No {mode} changes."
 
 
 def git_commit_impl(
@@ -278,10 +285,9 @@ GIT_STATUS_DESCRIPTION = (
 )
 
 GIT_DIFF_DESCRIPTION = (
-    "Show only the unstaged Git diff for the workspace or one safe "
-    "workspace-relative path. Staged changes are not included; use "
-    "git_status to see whether files are staged (it does not show their diff). "
-    "Use after editing to inspect unstaged changes before committing. Output is bounded."
+    "Inspect Git changes for the workspace or one safe workspace-relative path. "
+    "mode='unstaged' (default) shows working-tree changes, mode='staged' shows "
+    "the index, and mode='both' returns separate staged and unstaged sections. Output is bounded."
 )
 
 GIT_COMMIT_DESCRIPTION = (
@@ -290,6 +296,73 @@ GIT_COMMIT_DESCRIPTION = (
     "stages the entire workspace implicitly, validates paths through the "
     "sandbox, and protects sensitive paths."
 )
+
+
+
+
+_BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$")
+
+
+def _validate_branch_name(name: str) -> str:
+    if not isinstance(name, str) or not _BRANCH_RE.fullmatch(name):
+        raise ValueError("Branch name contains unsupported characters or is too long.")
+    if name.endswith(("/", ".")) or "//" in name or ".." in name or "@{" in name:
+        raise ValueError("Branch name is not a safe Git ref.")
+    if any(part.startswith(".") or part.endswith(".lock") for part in name.split("/")):
+        raise ValueError("Branch name is not a safe Git ref.")
+    return name
+
+
+def git_list_branches_impl(sandbox: Sandbox) -> str:
+    if not (sandbox.root / ".git").exists():
+        raise SandboxError("Workspace is not a Git repository.")
+    result = _run_git(sandbox, ["branch", "--list", "--format=%(HEAD) %(refname:short)"])
+    if result.returncode != 0:
+        detail = _bounded_output(result.stdout, result.stderr)
+        raise ValueError(f"git branch list failed{': ' + detail if detail else '.'}")
+    return _bounded_output(result.stdout, result.stderr) or "No local branches found."
+
+
+def git_create_branch_impl(sandbox: Sandbox, branch_name: str) -> str:
+    if not (sandbox.root / ".git").exists():
+        raise SandboxError("Workspace is not a Git repository.")
+    name = _validate_branch_name(branch_name)
+    result = _run_git(sandbox, ["check-ref-format", "--branch", name])
+    if result.returncode != 0:
+        raise ValueError("Branch name is not a valid Git branch name.")
+    exists = _run_git(sandbox, ["show-ref", "--verify", "--quiet", f"refs/heads/{name}"])
+    if exists.returncode == 0:
+        raise ValueError(f"Branch already exists: {name}.")
+    if exists.returncode != 1:
+        raise ValueError("Unable to verify whether the branch already exists.")
+    created = _run_git(sandbox, ["branch", "--", name])
+    if created.returncode != 0:
+        detail = _bounded_output(created.stdout, created.stderr)
+        raise ValueError(f"git branch creation failed{': ' + detail if detail else '.'}")
+    return f"Created local branch {name!r}; the current branch was not changed."
+
+
+def git_switch_branch_impl(sandbox: Sandbox, branch_name: str) -> str:
+    if not (sandbox.root / ".git").exists():
+        raise SandboxError("Workspace is not a Git repository.")
+    name = _validate_branch_name(branch_name)
+    check = _run_git(sandbox, ["check-ref-format", "--branch", name])
+    if check.returncode != 0:
+        raise ValueError("Branch name is not a valid Git branch name.")
+    status = _run_git(sandbox, ["status", "--porcelain", "--untracked-files=all"])
+    if status.returncode != 0:
+        detail = _bounded_output(status.stdout, status.stderr)
+        raise ValueError(f"Unable to inspect working tree{': ' + detail if detail else '.'}")
+    if status.stdout.strip():
+        raise ValueError("Refusing to switch branches while the working tree has staged, unstaged, or untracked changes. Commit or preserve them first.")
+    exists = _run_git(sandbox, ["show-ref", "--verify", "--quiet", f"refs/heads/{name}"])
+    if exists.returncode != 0:
+        raise ValueError(f"Local branch does not exist: {name}. Create it first with git_create_branch.")
+    switched = _run_git(sandbox, ["switch", "--no-guess", "--", name])
+    if switched.returncode != 0:
+        detail = _bounded_output(switched.stdout, switched.stderr)
+        raise ValueError(f"git switch failed{': ' + detail if detail else '.'}")
+    return f"Switched to branch {name!r}."
 
 
 def register(
@@ -330,14 +403,18 @@ def register(
             str | None,
             Field(
                 description=(
-                    "Optional workspace-relative file or directory to "
-                    "diff. Omit to inspect all unstaged changes."
+                    "Optional workspace-relative file or directory to diff. "
+                    "Omit to inspect the whole workspace."
                 ),
             ),
         ] = None,
+        mode: Annotated[
+            str,
+            Field(description="Diff view: unstaged (default), staged, or both."),
+        ] = "unstaged",
     ) -> str:
-        """Show bounded unstaged Git changes."""
-        return git_diff_impl(sandbox, path)
+        """Show bounded staged, unstaged, or combined Git changes."""
+        return git_diff_impl(sandbox, path, mode)
 
     mcp.add_tool(
         git_diff,
@@ -347,6 +424,7 @@ def register(
     )
     set_explicit_required(mcp, "git_diff")
     set_property_type(mcp, "git_diff", "path", "string")
+    set_property_type(mcp, "git_diff", "mode", "string")
 
     @audited(
         tool_name="git_commit",
@@ -407,3 +485,31 @@ def register(
         description=GIT_LOG_DESCRIPTION,
         structured_output=False,
     )
+
+    @audited(tool_name="git_list_branches", role=client_id, log_path=log_path,
+             summarize=lambda _a, _kw: {})
+    def git_list_branches() -> str:
+        """List local branches and mark the current branch."""
+        return git_list_branches_impl(sandbox)
+
+    mcp.add_tool(git_list_branches, name="git_list_branches", structured_output=False)
+
+    @audited(tool_name="git_create_branch", role=client_id, log_path=log_path,
+             summarize=lambda _a, kw: {"branch_name": kw.get("branch_name")})
+    def git_create_branch(
+        branch_name: Annotated[str, Field(min_length=1, max_length=128, description="New local branch name.")],
+    ) -> str:
+        """Create a local branch without switching to it or overwriting an existing branch."""
+        return git_create_branch_impl(sandbox, branch_name)
+
+    mcp.add_tool(git_create_branch, name="git_create_branch", structured_output=False)
+
+    @audited(tool_name="git_switch_branch", role=client_id, log_path=log_path,
+             summarize=lambda _a, kw: {"branch_name": kw.get("branch_name")})
+    def git_switch_branch(
+        branch_name: Annotated[str, Field(min_length=1, max_length=128, description="Existing local branch name.")],
+    ) -> str:
+        """Switch branches only when the working tree is completely clean."""
+        return git_switch_branch_impl(sandbox, branch_name)
+
+    mcp.add_tool(git_switch_branch, name="git_switch_branch", structured_output=False)

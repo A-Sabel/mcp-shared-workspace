@@ -10,7 +10,7 @@ flowchart TD
     HTTP --> Auth[OAuth and legacy bearer authentication]
     Auth --> OAuth[OAuth authorization endpoints and sign-in]
     OAuth --> DB[(OAuth SQLite store)]
-    Auth --> MCP[One MCP server with 15 tools]
+    Auth --> MCP[One MCP server with registered tools]
     MCP --> Sandbox[Workspace sandbox]
     MCP --> Registry[(Named workspace registry)]
     Sandbox --> Files[Live workspace]
@@ -34,8 +34,8 @@ path safety, tool registration, and audit records.
 
 | Authenticated MCP client | Access |
 | ------------------------ | ------ |
-| OAuth token              | All 15 workspace tools |
-| `MCP_TOKEN` (legacy)     | All 15 workspace tools |
+| OAuth token              | All tools in the running server catalog |
+| `MCP_TOKEN` (legacy)     | All tools in the running server catalog |
 
 File deletion is reversible: `delete_file` moves a file to a unique private
 `.trash` entry with metadata, and `restore_file` restores it only when the

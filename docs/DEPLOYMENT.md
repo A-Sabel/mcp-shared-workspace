@@ -86,9 +86,11 @@ try {
 
 After a hostname change, verify the unauthenticated health response, then use
 MCP Inspector against `https://<PUBLIC_HOSTNAME>/mcp` with the configured
-`MCP_TOKEN`; initialization should succeed and expose all 15 workspace tools.
-At this Inspector flow, the legacy `MCP_TOKEN` grants the same workspace access.
-Supply it through Inspector's secret/header UI, not a URL or saved command.
+`MCP_TOKEN`. Initialize the Streamable HTTP connection and open the **Tools**
+view to see the catalog exposed by the running server. To verify newly added
+tools, press **Reload server** first, then reconnect Inspector so it starts a
+fresh MCP session. The legacy `MCP_TOKEN` grants workspace access; supply it
+through Inspector's secret/header UI, not a URL or saved command.
 For an MCP client's OAuth sign-in flow below, enter the workspace access key to
 authorize the profile.
 

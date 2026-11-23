@@ -1,9 +1,11 @@
 """Write-oriented tools for the MCP shared workspace."""
 
+import hashlib
 import json
 import os
 import shutil
 import stat
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -20,9 +22,30 @@ from pydantic import Field
 
 from server.config import MAX_WRITE_BYTES
 from server.sandbox import Sandbox, SandboxError
+from server.tools.schema_utils import set_property_type
 
 MAX_REPLACE_TEXT_CHARS = 50_000
 MAX_REPLACEMENTS = 100
+_FILE_WRITE_LOCK = threading.RLock()
+
+
+def _check_expected_hash(target: Path, expected_hash: str | None, path: str) -> None:
+    if expected_hash is None:
+        return
+    if not isinstance(expected_hash, str) or len(expected_hash) != 64:
+        raise ValueError("expected_hash must be a 64-character SHA-256 hex digest.")
+    try:
+        int(expected_hash, 16)
+    except ValueError:
+        raise ValueError("expected_hash must be a 64-character SHA-256 hex digest.") from None
+    if not target.is_file():
+        raise ValueError(f"Concurrency conflict for {path}: file does not exist.")
+    actual = hashlib.sha256(target.read_bytes()).hexdigest()
+    if actual.lower() != expected_hash.lower():
+        raise ValueError(
+            f"Concurrency conflict for {path}: expected_hash does not match current file content. "
+            "Read the latest file and retry with its current hash."
+        )
 
 
 def _validate_text(value: str, name: str, max_chars: int) -> str:
@@ -42,6 +65,7 @@ def write_file_impl(
     sandbox: Sandbox,
     path: str,
     content: str,
+    expected_hash: str | None = None,
 ) -> str:
     """Create or overwrite one file inside the sandbox."""
     if not isinstance(content, str):
@@ -52,11 +76,13 @@ def write_file_impl(
 
     target = sandbox.resolve(path, for_write=True)
 
-    if target.exists() and not target.is_file():
-        raise ValueError(f"Target is not a regular file: {path}")
-
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8")
+    with _FILE_WRITE_LOCK:
+        if expected_hash is not None:
+            _check_expected_hash(target, expected_hash, path)
+        if target.exists() and not target.is_file():
+            raise ValueError(f"Target is not a regular file: {path}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
 
     return (
         f"Wrote {sandbox.relative(target)} "
@@ -70,6 +96,7 @@ def str_replace_impl(
     old: str,
     new: str,
     replace_all: bool = False,
+    expected_hash: str | None = None,
 ) -> str:
     """Replace exact text inside one sandbox file."""
     _validate_text(old, "old", MAX_REPLACE_TEXT_CHARS)
@@ -88,10 +115,12 @@ def str_replace_impl(
     if not target.is_file():
         raise ValueError(f"Target is not a regular file: {path}")
 
-    try:
-        text = target.read_text(encoding="utf-8")
-    except UnicodeDecodeError as exc:
-        raise ValueError(f"File is not valid UTF-8 text: {path}") from exc
+    with _FILE_WRITE_LOCK:
+        _check_expected_hash(target, expected_hash, path)
+        try:
+            text = target.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError(f"File is not valid UTF-8 text: {path}") from exc
 
     occurrences = text.count(old)
 
@@ -114,7 +143,10 @@ def str_replace_impl(
     if len(updated.encode("utf-8")) > MAX_WRITE_BYTES:
         raise ValueError(f"Updated file exceeds the {MAX_WRITE_BYTES:,}-byte limit.")
 
-    target.write_text(updated, encoding="utf-8")
+    with _FILE_WRITE_LOCK:
+        if expected_hash is not None:
+            _check_expected_hash(target, expected_hash, path)
+        target.write_text(updated, encoding="utf-8")
 
     return f"Replaced {replacements} occurrence(s) in " f"{sandbox.relative(target)}."
 
@@ -364,7 +396,7 @@ Create or overwrite one UTF-8 text file inside the workspace.
 Use this when a file needs to be created or its complete contents need to be
 replaced. The path must remain inside the sandbox and protected paths such as
 .git and environment/credential files are rejected. Prefer str_replace for a
-small targeted edit so unnecessary file contents do not need to be rewritten.
+small targeted edit so unnecessary file contents do not need to be rewritten. Pass expected_hash (SHA-256 of the current file bytes) to prevent overwriting concurrent changes.
 """.strip()
 
 
@@ -374,7 +406,7 @@ Replace exact text inside an existing UTF-8 text file.
 Use this for small, targeted modifications. By default the old text must occur
 exactly once; if it occurs multiple times, the tool fails instead of making an
 ambiguous edit. Set replace_all=true only when replacing every occurrence is
-intentional. The updated file remains subject to the workspace size limit.
+intentional. Pass expected_hash (SHA-256 of the current file bytes) to reject stale edits. The updated file remains subject to the workspace size limit.
 """.strip()
 
 
@@ -425,8 +457,11 @@ def register(
     def write_file(
         path: str = Field(description="Workspace-relative file path."),
         content: str = Field(description="Complete UTF-8 text content to write."),
+        expected_hash: str | None = Field(default=None, description="Optional SHA-256 hash of the existing file bytes; rejects stale writes."),
     ) -> str:
-        return write_file_impl(sandbox, path, content)
+        return write_file_impl(sandbox, path, content, expected_hash)
+
+    set_property_type(mcp, "write_file", "expected_hash", "string")
 
     @mcp.tool(
         name="str_replace",
@@ -446,6 +481,7 @@ def register(
             default=False,
             description="Replace every occurrence.",
         ),
+        expected_hash: str | None = Field(default=None, description="Optional SHA-256 hash of the existing file bytes; rejects stale edits."),
     ) -> str:
         return str_replace_impl(
             sandbox,
@@ -453,7 +489,10 @@ def register(
             old,
             new,
             replace_all,
+            expected_hash,
         )
+
+    set_property_type(mcp, "str_replace", "expected_hash", "string")
 
     @mcp.tool(
         name="delete_file",

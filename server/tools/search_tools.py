@@ -14,7 +14,7 @@ from server.audited_tool import audited
 from server.config import SEARCH_LIMIT, SNIPPET_CHARS
 from server.sandbox import Sandbox, SandboxError
 from server.tools.schema_utils import set_property_type
-from server.tools.file_tools import _glob_match, _walk
+from server.tools.file_tools import _glob_match, _ignored_paths, _walk
 
 MAX_SEARCH_FILE_BYTES = 5_000_000
 
@@ -60,6 +60,16 @@ def search_files_impl(
 
     else:
         raise SandboxError(f"Path {path!r} is not a file or directory.")
+
+    ignored = _ignored_paths(sandbox, candidates)
+    candidates = [
+        candidate for candidate in candidates
+        if sandbox.relative(candidate) not in ignored
+        and not any(
+            sandbox.relative(candidate).startswith(prefix + "/")
+            for prefix in ignored
+        )
+    ]
 
     if glob:
         candidates = [

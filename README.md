@@ -1,8 +1,8 @@
 # MCP Shared Workspace Server
 
 A sandboxed Python MCP server exposes a persistent shared
-workspace over Streamable HTTP. It provides one authenticated 21-tool toolbox,
-append-only handoff files, audit logging, compact project context, source outlines,
+workspace over Streamable HTTP. It provides one authenticated toolbox,
+shared state management, audit logging, compact project context, source outlines,
 and Git operations.
 
 ## Capabilities
@@ -17,7 +17,7 @@ The known hard-link and TOCTOU limitations are recorded in [docs/SECURITY.md](do
 
 ## Tools
 
-The MCP server exposes 21 tools to the authenticated workspace profile.
+The MCP server exposes the tools registered by the server modules to the authenticated workspace profile.
 
 | Tool                 | What it can do                                                  |
 | -------------------- | --------------------------------------------------------------- |
@@ -26,17 +26,30 @@ The MCP server exposes 21 tools to the authenticated workspace profile.
 | `search_files`       | Search workspace files by text or regular expression.           |
 | `append_state`       | Add a handoff entry to the shared state files.                  |
 | `git_status`         | Show the workspace Git status.                                  |
-| `git_diff`           | Inspect bounded unstaged Git changes.                           |
-| `write_file`         | Create or replace a workspace text file.                        |
-| `str_replace`        | Make an exact, targeted text replacement.                       |
+| `git_diff`           | Inspect bounded staged, unstaged, or combined Git changes.       |
+| `write_file`         | Create or replace a file, optionally guarded by its SHA-256 hash. |
+| `str_replace`        | Replace exact text, optionally guarded by its SHA-256 hash.      |
 | `delete_file`        | Soft-delete a file by moving it to `.trash`.                    |
 | `restore_file`       | Restore a soft-deleted file without overwriting conflicts.      |
 | `remove_directory`   | Remove an empty directory; non-empty directories are refused.   |
+| `move_file`           | Move or rename a regular file within the workspace.               |
+| `create_directory`    | Create a directory and any missing parent directories.            |
+| `read_state`          | Read bounded recent entries or a selected state section.           |
+| `archive_state`       | Preserve a state file as an immutable archive copy.                 |
+| `compact_state`       | Archive full state before applying an agent-provided summary.       |
+| `read_audit_log`      | Read bounded, filtered recent audit records.                        |
+| `apply_patch`         | Apply exact-context unified diffs to existing files with per-file atomic replacement.    |
+| `find_symbol`         | Find likely declarations of a symbol across source files.         |
+| `find_references`     | Find lexical references to a symbol across source files.          |
+| `git_list_branches`   | List local branches and identify the current branch.              |
+| `git_create_branch`   | Create a local branch without switching or overwriting.           |
+| `git_switch_branch`   | Switch to an existing branch only from a clean working tree.      |
 | `git_commit`         | Commit explicitly selected safe workspace paths.                |
 | `git_log`            | Show recent commits and changed-file summaries.                  |
 | `get_workspace_context` | Return selected project context within a token budget.         |
 | `get_file_outline`   | Extract imports and declarations from source files.              |
 | `get_project_map`    | Map modules, imports, entry points, and root configuration.      |
+| `get_change_impact`  | Estimate dependencies, references, and tests affected by a change. |
 | `run_project_checks` | Run allowlisted, configured pytest, Ruff, or mypy checks.         |
 | `delete_workspace`   | Unregister a workspace without deleting its project files.        |
 | `list_workspaces`    | List registered project workspaces and the active one.          |
@@ -45,6 +58,22 @@ The MCP server exposes 21 tools to the authenticated workspace profile.
 
 The AI chooses the tools needed for each task. The server still validates every
 request before it reaches the workspace.
+
+State tools are restricted to the four approved handoff files. `read_state` returns
+recent timestamped entries by default, with bounded entry counts, or an exact
+second-level Markdown section. `archive_state` preserves the current file without
+changing it. `compact_state` first creates a content-addressed archive, then atomically
+replaces the active file with the agent-supplied summary; the server does not generate
+summaries or delete archived history. Archives are stored under `.workspace-archive/`.
+Branch tools operate on local branches only. `git_create_branch` validates the ref and refuses an existing name without changing the current branch. `git_switch_branch` refuses any staged, unstaged, or untracked changes and never stashes, resets, or discards work.
+
+`run_project_checks` optionally reads `.mcp-workspace-checks.json`, whose only supported keys are `pytest`, `ruff`, and `mypy`, each with a `paths` array. The file can select existing workspace-relative targets but cannot provide commands, flags, environment variables, or executable scripts; the server constructs every command from its fixed allowlist. Without this file, the prior automatic configuration detection and default pytest behavior remain.
+
+`find_symbol` uses Python AST for Python declarations and conservative declaration patterns for other supported source types. `find_references` performs bounded lexical matching; it is not a language-server-grade semantic index. Both report partial results when the file scan limit is reached.
+
+`apply_patch` accepts unified diffs for existing UTF-8 files only. It validates every target and exact hunk context before writing, rejects renames/creation/deletion and protected paths, and prepares all replacements before swapping files individually. Each file swap is atomic; a multi-file patch is not a filesystem-wide transaction. It does not support fuzzy matching.
+`read_audit_log` reads at most the last 1 MB of JSONL data and returns at most 200
+matching records / 64 KB. `move_file` refuses overwrites unless explicitly enabled.
 
 `read_file` returns `total_lines`, `has_more`, and `next_start_line` so the AI can
 decide whether it has enough information for the task. If it needs more, it can
@@ -55,6 +84,15 @@ and one-line lookahead; `total_lines` is `null` when EOF was not reached. Set
 `count_total_lines=true` to scan through EOF for an exact total. Each call is
 limited to 200 lines per range and 64 KiB; an unusually long line that cannot
 fit in a response is an error.
+
+`get_change_impact` accepts a workspace-relative file path or a symbol name. It reports likely importers, text references, and related tests using static analysis; treat the results as leads to verify, not a complete runtime dependency graph.
+
+`git_diff` accepts `mode=unstaged` (default), `mode=staged`, or `mode=both`.
+For concurrent edits, pass the `sha256` returned by `read_file` as `expected_hash`
+to `write_file` or `str_replace`; it is the SHA-256 hex digest of the current file bytes. A mismatch
+returns a conflict and leaves the file unchanged. `list_files` and `search_files`
+respect Git ignore rules when run inside a Git repository with Git available;
+when Git cannot be used, they fall back to normal sandboxed traversal.
 
 ## Measure Tool And Token Efficiency
 
@@ -113,7 +151,7 @@ python -m pytest -q
 ```
 
 The authenticated MCP endpoint is `http://127.0.0.1:8000/mcp`. It exposes
-all 21 tools to authenticated clients. The server remains responsible for
+all registered tools to authenticated clients. The server remains responsible for
 path validation, protected files, write limits, Git safety, soft-delete, and
 audit logging.
 
@@ -161,8 +199,9 @@ pm2 restart mcp-workspace
 
 Connect an MCP client or Inspector to `https://<PUBLIC_HOSTNAME>/mcp`. OAuth
 clients can sign in with the workspace access key; legacy clients can use
-`Authorization: Bearer MCP_TOKEN`. An authenticated session exposes all 21
-tools. Keep `.env`, tokens, logs, and the external workspace out of commits.
+`Authorization: Bearer MCP_TOKEN`. An authenticated session exposes the
+server's current tool catalog. Keep `.env`, tokens, logs, and the external
+workspace out of commits.
 
 ## Run And Test
 

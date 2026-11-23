@@ -5,7 +5,7 @@ import subprocess
 import pytest
 
 from server.sandbox import Sandbox, SandboxError
-from server.tools.git_tools import git_status_impl, git_diff_impl, git_commit_impl, git_log_impl
+from server.tools.git_tools import (git_status_impl, git_diff_impl, git_commit_impl, git_log_impl, git_list_branches_impl, git_create_branch_impl, git_switch_branch_impl)
 
 @pytest.fixture
 def git_ws(tmp_path):
@@ -381,3 +381,30 @@ def test_git_log_rejects_non_git_workspace(tmp_path):
     root.mkdir()
     with pytest.raises(SandboxError, match="not a Git repository"):
         git_log_impl(Sandbox(root))
+
+def test_git_diff_shows_staged_changes(git_ws):
+    path = git_ws.root / "staged.txt"
+    path.write_text("staged content\n", encoding="utf-8")
+    subprocess.run(["git", "add", "staged.txt"], cwd=git_ws.root, check=True)
+    result = git_diff_impl(git_ws, mode="staged")
+    assert "staged.txt" in result
+    assert "+staged content" in result
+
+
+def test_git_diff_both_includes_staged_and_unstaged(git_ws):
+    path = git_ws.root / "example.txt"
+    path.write_text("original\n", encoding="utf-8")
+    git_commit_impl(git_ws, "Initial", ["example.txt"])
+    path.write_text("staged version\n", encoding="utf-8")
+    subprocess.run(["git", "add", "example.txt"], cwd=git_ws.root, check=True)
+    path.write_text("unstaged version\n", encoding="utf-8")
+
+    result = git_diff_impl(git_ws, mode="both")
+
+    assert "-original" in result
+    assert "+unstaged version" in result
+
+
+def test_git_diff_rejects_invalid_mode(git_ws):
+    with pytest.raises(ValueError, match="mode must be"):
+        git_diff_impl(git_ws, mode="all")

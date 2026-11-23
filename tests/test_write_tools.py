@@ -1,5 +1,6 @@
 """Tests for write-oriented file tools."""
 
+import hashlib
 import json
 
 import pytest
@@ -423,3 +424,35 @@ def test_delete_file_rejects_git_directory(workspace):
             workspace,
             ".git/config",
         )
+
+
+def test_write_file_rejects_stale_expected_hash(workspace):
+    path = workspace.root / "notes.txt"
+    path.write_text("version one", encoding="utf-8")
+    stale_hash = hashlib.sha256(b"older version").hexdigest()
+
+    with pytest.raises(ValueError, match="Concurrency conflict"):
+        write_file_impl(workspace, "notes.txt", "overwrite", stale_hash)
+
+    assert path.read_text(encoding="utf-8") == "version one"
+
+
+def test_write_file_accepts_current_expected_hash(workspace):
+    path = workspace.root / "notes.txt"
+    path.write_text("version one", encoding="utf-8")
+    current_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+
+    write_file_impl(workspace, "notes.txt", "version two", current_hash)
+
+    assert path.read_text(encoding="utf-8") == "version two"
+
+
+def test_str_replace_rejects_stale_expected_hash(workspace):
+    path = workspace.root / "notes.txt"
+    path.write_text("hello world", encoding="utf-8")
+    stale_hash = hashlib.sha256(b"different content").hexdigest()
+
+    with pytest.raises(ValueError, match="Concurrency conflict"):
+        str_replace_impl(workspace, "notes.txt", "world", "MCP", expected_hash=stale_hash)
+
+    assert path.read_text(encoding="utf-8") == "hello world"

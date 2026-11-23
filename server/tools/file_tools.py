@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import json
 import os
+import shutil
+import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated
@@ -146,6 +149,34 @@ def _read_result_summary(result: object) -> dict[str, object]:
     return {"read_ranges": coverage}
 
 
+def _ignored_paths(sandbox: Sandbox, paths: Sequence[Path]) -> set[str]:
+    """Return Git-ignored workspace-relative paths; fail open if Git is unavailable."""
+    if (
+        not paths
+        or shutil.which("git") is None
+        or not (sandbox.root / ".git").exists()
+    ):
+        return set()
+    relative = [sandbox.relative(path) for path in paths]
+    try:
+        result = subprocess.run(
+            ["git", "check-ignore", "-z", "--stdin"],
+            cwd=sandbox.root,
+            input="\0".join(relative) + "\0",
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            shell=False,
+            check=False,
+        )
+    except OSError:
+        return set()
+    if result.returncode not in (0, 1):
+        return set()
+    return {item for item in result.stdout.split("\0") if item}
+
+
 def _walk(
     sandbox: Sandbox,
     directory: Path,
@@ -214,6 +245,8 @@ def list_files_impl(
         )
 
     if base.is_file():
+        if sandbox.relative(base) in _ignored_paths(sandbox, [base]):
+            return f"{sandbox.relative(base)} (ignored by Git .gitignore)"
         size = base.stat().st_size
 
         parts = (
@@ -234,6 +267,16 @@ def list_files_impl(
         output=found,
     )
 
+    ignored = _ignored_paths(sandbox, [item_path for item_path, _ in found])
+    found = [
+        (item_path, is_dir)
+        for item_path, is_dir in found
+        if sandbox.relative(item_path) not in ignored
+        and not any(
+            sandbox.relative(item_path).startswith(prefix + "/")
+            for prefix in ignored
+        )
+    ]
     capped = len(found) >= SCAN_CAP
 
     if glob:
@@ -296,7 +339,7 @@ def list_files_impl(
 
 
 READ_FILE_DESCRIPTION = (
-    "Read a workspace-relative file in bounded line chunks. For one chunk, "
+    "Read a workspace-relative file in bounded line chunks and return its SHA-256 hash for optimistic concurrency checks. For one chunk, "
     "provide path, start_line, and optionally end_line. Line numbers are "
     "one-based and inclusive; every range may contain at most 200 lines. "
     "If a requested range is too large, split it into chunks of 200 lines or "
@@ -323,7 +366,7 @@ READ_FILE_DESCRIPTION = (
 LIST_FILES_DESCRIPTION = (
     "List workspace files and folders as relative paths with size and line "
     "count. Use first to see what exists, or use glob to find files by name. "
-    "Use search_files to find text inside files. Protected paths are hidden. "
+    "Use search_files to find text inside files. Protected paths and Git-ignored files are hidden when Git is available. "
     "Output is bounded; narrow with path, glob, or max_depth if truncated."
 )
 
@@ -608,6 +651,15 @@ def read_file_impl(
     return "\n\n".join(sections)
 
 
+def _file_sha256(path: Path) -> str:
+    """Hash a file incrementally without loading its full contents into memory."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def read_file_result_impl(
     sandbox: Sandbox,
     ranges: Sequence[ReadRange | dict[str, object]],
@@ -653,6 +705,7 @@ def read_file_result_impl(
         total_lines: int | None = None
         line_count = 0
         has_more = False
+        before_stat = file_path.stat()
         try:
             with file_path.open("r", encoding="utf-8") as stream:
                 for line_number, line in enumerate(stream, start=1):
@@ -682,6 +735,16 @@ def read_file_result_impl(
                         returned_end = line_number
                 else:
                     total_lines = line_count
+            sha256 = _file_sha256(file_path)
+            after_stat = file_path.stat()
+            if (
+                before_stat.st_size != after_stat.st_size
+                or before_stat.st_mtime_ns != after_stat.st_mtime_ns
+                or before_stat.st_ino != after_stat.st_ino
+            ):
+                raise ValueError(
+                    f"Range {index}: file {spec.path!r} changed while being read; retry the read."
+                )
         except UnicodeDecodeError:
             raise ValueError(f"Range {index}: file {spec.path!r} is not valid UTF-8 text.") from None
         except OSError as exc:
@@ -693,6 +756,7 @@ def read_file_result_impl(
         results.append(
             {
                 "path": spec.path,
+                "sha256": sha256,
                 "start_line": spec.start,
                 "end_line": returned_end if returned_end >= spec.start else None,
                 "requested_end_line": spec.end,

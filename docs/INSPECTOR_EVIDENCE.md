@@ -3,9 +3,10 @@
 Verified during the final deployment session on 2026-10-06:
 
 - MCP Inspector connected through the public HTTPS ngrok endpoint.
-- One-token authentication succeeded and exposed the ten tools registered at
-  the time of that session. The current server registers 15 tools; repeat the
-  live Inspector check to refresh this historical evidence.
+- One-token authentication succeeded and exposed the tools registered at the
+  time of that session. Tool count changes as modules are added; use the live
+  Inspector **Tools** view after reloading the server to verify the current
+  catalog.
 - A workflow read the shared workspace, updated handoff state, and
   exercised the deployed endpoint.
 - Handoff state was recovered from the MCP session, confirming that the

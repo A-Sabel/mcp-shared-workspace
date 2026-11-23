@@ -1,8 +1,11 @@
 """Tests for the search_files tool."""
 
+import subprocess
+
 import pytest
 
 from server.sandbox import Sandbox, SandboxError
+from server.tools.file_tools import list_files_impl
 from server.tools.search_tools import search_files_impl
 
 
@@ -207,3 +210,47 @@ def test_search_single_file(ws):
     assert "src/main.py:3:" in result
     assert "src/main.py:4:" in result
     assert "src/utils.py" not in result
+
+
+def test_search_respects_gitignore_and_negation(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+    (root / ".gitignore").write_text("*.log\n!keep.log\n", encoding="utf-8")
+    (root / "ignored.log").write_text("needle hidden\n", encoding="utf-8")
+    (root / "keep.log").write_text("needle visible\n", encoding="utf-8")
+    (root / "visible.txt").write_text("needle visible too\n", encoding="utf-8")
+
+    result = search_files_impl(Sandbox(root), "needle")
+
+    assert "keep.log" in result
+    assert "visible.txt" in result
+    assert "ignored.log" not in result
+
+
+def test_search_fails_open_when_git_is_unavailable(tmp_path, monkeypatch):
+    from server.tools import file_tools
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / ".gitignore").write_text("*.log\n", encoding="utf-8")
+    (root / "ignored.log").write_text("needle\n", encoding="utf-8")
+    monkeypatch.setattr(file_tools.shutil, "which", lambda _name: None)
+
+    result = search_files_impl(Sandbox(root), "needle")
+
+    assert "ignored.log" in result
+
+
+def test_list_files_respects_gitignore(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+    (root / ".gitignore").write_text("*.log\n", encoding="utf-8")
+    (root / "ignored.log").write_text("hidden\n", encoding="utf-8")
+    (root / "visible.txt").write_text("visible\n", encoding="utf-8")
+
+    result = list_files_impl(Sandbox(root), max_depth=2)
+
+    assert "visible.txt" in result
+    assert "ignored.log" not in result
