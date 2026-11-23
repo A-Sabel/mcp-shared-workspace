@@ -16,6 +16,46 @@ def test_apply_patch_modifies_file(tmp_path):
     assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "one\nTWO\nthree\n"
 
 
+def test_apply_patch_accepts_git_headers_fences_and_blank_context(tmp_path):
+    target = tmp_path / "a.txt"
+    target.write_text("before\n\nold\nafter\n", encoding="utf-8")
+    fence = chr(96) * 3
+    patch = "\n".join(
+        [
+            fence + "diff",
+            "diff --git a/a.txt b/a.txt",
+            "index 1111111..2222222 100644",
+            "--- a/a.txt",
+            "+++ b/a.txt",
+            "@@ -1,4 +1,4 @@",
+            " before",
+            "",
+            "-old",
+            "+new",
+            " after",
+            fence,
+        ]
+    )
+
+    apply_patch_impl(Sandbox(tmp_path), patch)
+
+    assert target.read_text(encoding="utf-8") == "before\n\nnew\nafter\n"
+
+
+def test_patch_parser_reports_invalid_hunk_line_content(tmp_path):
+    patch = "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\noops\n"
+
+    with pytest.raises(ValueError, match=r"Invalid hunk line at patch line 4: 'oops'.*leading space"):
+        apply_patch_impl(Sandbox(tmp_path), patch)
+
+
+def test_patch_parser_reports_hunk_number_and_counts(tmp_path):
+    patch = "--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n-old\n+new\n"
+
+    with pytest.raises(ValueError, match=r"Hunk 1 .*declares 2 old/2 new lines, found 1 old/1 new"):
+        apply_patch_impl(Sandbox(tmp_path), patch)
+
+
 def test_context_mismatch_changes_nothing(tmp_path):
     (tmp_path / "a.txt").write_text("actual\n", encoding="utf-8")
     (tmp_path / "b.txt").write_text("untouched\n", encoding="utf-8")

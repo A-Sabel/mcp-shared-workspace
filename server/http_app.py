@@ -112,6 +112,22 @@ def build_http_app(settings: Settings) -> ASGIApp:
         ),
         revocation_options=RevocationOptions(enabled=True),
     )
+    # ChatGPT probes both RFC 8414's OAuth metadata path and the OpenID Connect
+    # discovery path. This server issues OAuth tokens (not OIDC ID tokens), but
+    # the shared authorization metadata is sufficient for clients that use the
+    # OpenID discovery URL as their OAuth metadata lookup.
+    oauth_metadata_route = next(
+        route
+        for route in oauth_routes
+        if route.path == "/.well-known/oauth-authorization-server"
+    )
+    oauth_routes.append(
+        Route(
+            "/.well-known/openid-configuration",
+            endpoint=oauth_metadata_route.endpoint,
+            methods=["GET", "OPTIONS"],
+        )
+    )
     protected_resource_routes = create_protected_resource_routes(
         AnyHttpUrl(resource),
         [issuer_url],

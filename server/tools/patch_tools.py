@@ -26,11 +26,30 @@ def _parse_patch(patch: str) -> list[tuple[str, list[tuple[str, list[str], list[
     if not isinstance(patch, str) or not patch or len(patch) > _MAX_PATCH_CHARS:
         raise ValueError(f"patch must be non-empty and at most {_MAX_PATCH_CHARS:,} characters.")
     lines = patch.splitlines()
+    fence = chr(96) * 3
+    if lines and lines[0].startswith(fence) and lines[-1].strip() == fence:
+        lines = lines[1:-1]
     files = []
     i = 0
     while i < len(lines):
+        while i < len(lines) and (
+            not lines[i].strip()
+            or lines[i].startswith("diff --git ")
+            or lines[i].startswith("index ")
+        ):
+            i += 1
+        if i >= len(lines):
+            break
+        if lines[i].startswith("*** Begin Patch"):
+            raise ValueError(
+                "apply_patch accepts unified diff, not the Begin Patch format. "
+                "Use --- a/path, +++ b/path, and @@ hunk headers."
+            )
         if not lines[i].startswith("--- "):
-            raise ValueError(f"Expected '---' file header at patch line {i + 1}.")
+            raise ValueError(
+                f"Expected '---' unified-diff file header at patch line {i + 1}; "
+                f"got {lines[i][:120]!r}. Example: --- a/file.txt"
+            )
         old_name = lines[i][4:].split("\t", 1)[0]
         i += 1
         if i >= len(lines) or not lines[i].startswith("+++ "):
@@ -45,23 +64,42 @@ def _parse_patch(patch: str) -> list[tuple[str, list[tuple[str, list[str], list[
             raise ValueError("Renames are not supported by apply_patch.")
         hunks = []
         while i < len(lines) and not lines[i].startswith("--- "):
+            if lines[i].startswith("diff --git ") or lines[i].startswith("index "):
+                break
             if not lines[i].startswith("@@ "):
                 if not lines[i].strip():
                     i += 1
                     continue
-                raise ValueError(f"Expected hunk header at patch line {i + 1}.")
+                raise ValueError(
+                    f"Expected hunk header at patch line {i + 1}; "
+                    f"got {lines[i][:120]!r}. Example: @@ -1,2 +1,2 @@"
+                )
             match = _HUNK.match(lines[i])
             if not match:
-                raise ValueError(f"Invalid hunk header at patch line {i + 1}.")
+                raise ValueError(
+                    f"Invalid hunk header at patch line {i + 1}: "
+                    f"{lines[i][:120]!r}. Expected @@ -old[,count] +new[,count] @@."
+                )
+            hunk_number = len(hunks) + 1
+            hunk_header_line = i + 1
             i += 1
             old_lines, new_lines = [], []
             while i < len(lines) and not lines[i].startswith("@@ ") and not lines[i].startswith("--- "):
                 line = lines[i]
+                if line.startswith("diff --git ") or line.startswith("index "):
+                    break
                 if line.startswith("\\ No newline"):
                     i += 1
                     continue
-                if not line or line[0] not in " +-":
-                    raise ValueError(f"Invalid hunk line at patch line {i + 1}.")
+                if not line:
+                    # Some transports strip the required leading space from an
+                    # empty context line. Exact context matching still applies.
+                    line = " "
+                if line[0] not in " +-":
+                    raise ValueError(
+                        f"Invalid hunk line at patch line {i + 1}: "
+                        f"{line[:120]!r}; expected a leading space, '+' or '-'."
+                    )
                 if line[0] in " -":
                     old_lines.append(line[1:])
                 if line[0] in " +":
@@ -70,7 +108,12 @@ def _parse_patch(patch: str) -> list[tuple[str, list[tuple[str, list[str], list[
             old_count = int(match.group(2) or "1")
             new_count = int(match.group(4) or "1")
             if len(old_lines) != old_count or len(new_lines) != new_count:
-                raise ValueError("Hunk line counts do not match the hunk header.")
+                raise ValueError(
+                    f"Hunk {hunk_number} (header at patch line {hunk_header_line}) "
+                    f"line counts do not match: header declares {old_count} old/"
+                    f"{new_count} new lines, found {len(old_lines)} old/"
+                    f"{len(new_lines)} new lines."
+                )
             hunks.append((match.group(1), old_lines, new_lines))
         if not hunks:
             raise ValueError(f"No hunks found for {old_path!r}.")
@@ -202,7 +245,19 @@ def register(mcp: MCPServer, sandbox: Sandbox, client_id: str = "workspace-clien
     @audited(tool_name="apply_patch", role=client_id, log_path=log_path,
              summarize=lambda _a, kw: {"patch_chars": len(kw.get("patch", ""))})
     def apply_patch(
-        patch: Annotated[str, Field(min_length=1, max_length=_MAX_PATCH_CHARS, description="Unified diff with exact context; only existing files may be modified.")],
+        patch: Annotated[
+            str,
+            Field(
+                min_length=1,
+                max_length=_MAX_PATCH_CHARS,
+                description=(
+                    "Unified diff with exact context; only existing files may be modified. "
+                    "Use headers --- a/file.txt and +++ b/file.txt, then @@ hunks. "
+                    "Example: --- a/file.txt\\n+++ b/file.txt\\n@@ -1 +1 @@\\n-old\\n+new. "
+                    "Git diff headers and an outer markdown code fence are also accepted."
+                ),
+            ),
+        ],
         expected_hash: str | None = Field(default=None, description="SHA-256 of the current file bytes; for single-file patches only."),
         expected_hashes: dict[str, str] | None = Field(default=None, description="Optional mapping of every patched workspace-relative path to its current SHA-256 hash; required keys must exactly match patched paths."),
     ) -> str:

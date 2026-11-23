@@ -52,14 +52,18 @@ class AuthenticationMiddleware:
                 break
 
         if not authorization:
-            await self._unauthorized(send, "Missing Authorization header.")
+            await self._unauthorized(
+                scope, send, "missing_authorization", "Missing Authorization header."
+            )
             return
 
         scheme, separator, token = authorization.partition(" ")
 
         if not separator or scheme.lower() != "bearer":
             await self._unauthorized(
+                scope,
                 send,
+                "invalid_authorization_scheme",
                 "Authorization header must use the Bearer scheme.",
             )
             return
@@ -67,13 +71,17 @@ class AuthenticationMiddleware:
         token = token.strip()
 
         if not token:
-            await self._unauthorized(send, "Bearer token is empty.")
+            await self._unauthorized(
+                scope, send, "empty_bearer_token", "Bearer token is empty."
+            )
             return
 
         access_token = await self.verifier.verify_token(token)
 
         if access_token is None:
-            await self._unauthorized(send, "Invalid authentication token.")
+            await self._unauthorized(
+                scope, send, "invalid_or_expired_token", "Invalid authentication token."
+            )
             return
 
         if scope.get("path") == "/health" and scope.get("method") == "GET":
@@ -86,7 +94,16 @@ class AuthenticationMiddleware:
         finally:
             reset_access_token(context_token)
 
-    async def _unauthorized(self, send: Send, message: str) -> None:
+    async def _unauthorized(
+        self, scope: Scope, send: Send, reason: str, message: str
+    ) -> None:
+        # Log the rejection category only; never record bearer credentials.
+        logger.info(
+            "MCP authentication challenge: reason=%s method=%s path=%s",
+            reason,
+            scope.get("method", "unknown"),
+            scope.get("path", "unknown"),
+        )
         body = message.encode("utf-8")
 
         await send(

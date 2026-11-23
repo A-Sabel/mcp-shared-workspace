@@ -333,3 +333,21 @@ def test_missing_token_cannot_initialize(tmp_path: Path):
         )
 
         assert response.status_code == 401
+        assert response.headers["www-authenticate"] == (
+            'Bearer resource_metadata="https://localhost/.well-known/oauth-protected-resource/mcp"'
+        )
+
+
+def test_oauth_discovery_metadata_is_public_on_oauth_and_openid_paths(tmp_path: Path):
+    settings = make_settings(tmp_path)
+    app = build_http_app(settings)
+
+    with TestClient(app) as client:
+        oauth = client.get("/.well-known/oauth-authorization-server")
+        openid_compat = client.get("/.well-known/openid-configuration")
+
+    assert oauth.status_code == 200
+    assert openid_compat.status_code == 200
+    assert openid_compat.json()["issuer"] == oauth.json()["issuer"]
+    assert openid_compat.json()["authorization_endpoint"] == oauth.json()["authorization_endpoint"]
+    assert "offline_access" in openid_compat.json()["scopes_supported"]
