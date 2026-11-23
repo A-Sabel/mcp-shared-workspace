@@ -234,6 +234,7 @@ def list_files_impl(
     glob: str | None = None,
     max_depth: int = 1,
     limit: int = LIST_LIMIT,
+    include_details: bool = False,
 ) -> str:
     """Implementation of the list_files operation."""
     base = sandbox.resolve(path)
@@ -247,6 +248,8 @@ def list_files_impl(
     if base.is_file():
         if sandbox.relative(base) in _ignored_paths(sandbox, [base]):
             return f"{sandbox.relative(base)} (ignored by Git .gitignore)"
+        if not include_details:
+            return sandbox.relative(base)
         size = base.stat().st_size
 
         parts = (
@@ -319,6 +322,9 @@ def list_files_impl(
             lines.append(relative + "/")
             continue
 
+        if not include_details:
+            lines.append(relative)
+            continue
         size = item_path.stat().st_size
 
         parts = (
@@ -350,7 +356,7 @@ READ_FILE_DESCRIPTION = (
     "request up to five chunks/files in one call. For sequential chunks of the "
     "same file, set each range's start to the prior chunk's next_start_line. "
     "By default the server stops after the requested range and one-line "
-    "lookahead; total_lines is null unless EOF was reached naturally. Set "
+    "lookahead; total_lines is omitted unless EOF was reached naturally. Set "
     "count_total_lines=true to scan through EOF for an exact total. Each result "
     "includes has_more and next_start_line for continuation. "
     "Use your judgment to decide whether the returned content is enough for "
@@ -365,8 +371,8 @@ READ_FILE_DESCRIPTION = (
 
 
 LIST_FILES_DESCRIPTION = (
-    "List workspace files and folders as relative paths with size and line "
-    "count. Use first to see what exists, or use glob to find files by name. "
+    "List workspace files and folders as relative paths. Set include_details=true "
+    "to add file sizes and line counts. Use glob to find files by name. "
     "Use search_files to find text inside files. Protected paths and Git-ignored files are hidden when Git is available. "
     "Output is bounded; narrow with path, glob, or max_depth if truncated."
 )
@@ -427,6 +433,12 @@ def register(
                     description="Maximum number of entries to return.",
                 ),
             ] = LIST_LIMIT,
+            include_details: Annotated[
+                bool,
+                Field(
+                    description="Include file sizes and line counts; defaults to false for compact output.",
+                ),
+            ] = False,
         ) -> str:
             """List files and folders in the sandboxed workspace."""
             try:
@@ -436,6 +448,7 @@ def register(
                     glob,
                     max_depth,
                     limit,
+                    include_details,
                 )
             except (SandboxError, OSError) as exc:
                 raise ValueError(str(exc)) from None
@@ -750,19 +763,21 @@ def read_file_result_impl(
 
         if count_total_lines:
             has_more = returned_end < (total_lines or 0) and (total_lines or 0) >= spec.start
-        results.append(
-            {
-                "path": spec.path,
-                "sha256": sha256,
-                "start_line": spec.start,
-                "end_line": returned_end if returned_end >= spec.start else None,
-                "requested_end_line": requested_end,
-                "total_lines": total_lines,
-                "has_more": has_more,
-                "next_start_line": returned_end + 1 if has_more else None,
-                "content": "\n".join(lines) if lines else "(no lines in requested range)",
-            }
-        )
+        result: dict[str, object] = {
+            "path": spec.path,
+            "sha256": sha256,
+            "start_line": spec.start,
+            "requested_end_line": requested_end,
+            "has_more": has_more,
+            "content": "\n".join(lines) if lines else "(no lines in requested range)",
+        }
+        if returned_end >= spec.start:
+            result["end_line"] = returned_end
+        if total_lines is not None:
+            result["total_lines"] = total_lines
+        if has_more:
+            result["next_start_line"] = returned_end + 1
+        results.append(result)
 
     result = json.dumps({"ranges": results}, ensure_ascii=False)
     if len(result.encode("utf-8")) > MAX_READ_RESPONSE_BYTES:

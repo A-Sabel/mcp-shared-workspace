@@ -23,7 +23,7 @@ The MCP server exposes the tools registered by the server modules to the authent
 
 | Tool                 | What it can do                                                  |
 | -------------------- | --------------------------------------------------------------- |
-| `list_files`         | Browse files and folders in the workspace.                      |
+| `list_files`         | Browse files and folders; sizes and line counts are opt-in.     |
 | `read_file`          | Read bounded chunks; optionally count all file lines.            |
 | `search_files`       | Search workspace files by text or regular expression.           |
 | `append_state`       | Add a handoff entry to the shared state files.                  |
@@ -86,7 +86,7 @@ decide whether it has enough information for the task. If it needs more, it can
 request the next chunk from `next_start_line`, or batch up to five known-needed
 chunks with `ranges`. For complete-file requests, it should continue until
 `has_more` is false. By default, targeted reads stop after the requested range
-and one-line lookahead; `total_lines` is `null` when EOF was not reached. Set
+and one-line lookahead; `total_lines` is omitted when EOF was not reached. Set
 `count_total_lines=true` to scan through EOF for an exact total. Each call is
 limited to 200 lines per range and 64 KiB; an unusually long line that cannot
 fit in a response is an error.

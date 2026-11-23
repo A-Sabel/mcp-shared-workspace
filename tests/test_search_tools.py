@@ -254,3 +254,19 @@ def test_list_files_respects_gitignore(tmp_path):
 
     assert "visible.txt" in result
     assert "ignored.log" not in result
+
+
+def test_list_files_omits_size_and_line_counts_by_default(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "sample.txt").write_text("one line\n", encoding="utf-8")
+
+    compact = list_files_impl(Sandbox(root), max_depth=1)
+    detailed = list_files_impl(Sandbox(root), max_depth=1, include_details=True)
+
+    assert "sample.txt" in compact
+    assert " B" not in compact
+    assert "lines" not in compact
+    assert "sample.txt" in detailed
+    assert " B" in detailed
+    assert "line" in detailed

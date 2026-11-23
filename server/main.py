@@ -38,7 +38,7 @@ INSTRUCTIONS = (
     "to 200 lines. For larger files, start with lines 1-200 and continue using "
     "the returned next_start_line. read_file returns bounded chunks with has_more "
     "and next_start_line; "
-    "total_lines may be null unless EOF was reached or counting was requested. "
+    "total_lines is omitted unless EOF was reached or counting was requested. "
     "Use your judgment to decide whether a chunk is enough for the task; if you "
     "need more context, request next_start_line; batch up to five known-needed "
     "chunks with read_file ranges when useful. For complete-file requests, "

@@ -206,10 +206,26 @@ def test_read_result_stops_early_unless_exact_total_requested(
     assert readers[0].bytes_read == sum(
         len(line.encode("utf-8")) for line in fixture_lines[:expected_lines_read]
     )
-    assert result["total_lines"] == expected_total
+    if expected_total is None:
+        assert "total_lines" not in result
+    else:
+        assert result["total_lines"] == expected_total
     assert result["has_more"] is True
     assert result["next_start_line"] == 161
     assert result["content"].endswith("160: " + fixture_lines[159].rstrip("\n"))
+
+
+def test_read_result_omits_empty_continuation_fields(sandbox):
+    response = read_file_result_impl(
+        sandbox,
+        [{"path": "two.txt", "start": 8, "end": 9}],
+    )
+    result = json.loads(response)["ranges"][0]
+
+    assert result["has_more"] is False
+    assert "end_line" not in result
+    assert result["total_lines"] == 2
+    assert "next_start_line" not in result
 
 
 def test_read_file_is_registered_for_authenticated_client(tmp_path):

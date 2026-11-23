@@ -41,7 +41,7 @@
 ## Known limitations
 
 - `read_file` stops after the requested range and one-line lookahead by
-  default. It returns `total_lines: null` when it has not reached EOF. Setting
+  default. It omits `total_lines` when it has not reached EOF. Setting
   `count_total_lines=true` scans through EOF to calculate the exact total, even
   when the requested range is near the beginning. This does not send the entire
   file to the model; returned content stays within the tool's response limits.
