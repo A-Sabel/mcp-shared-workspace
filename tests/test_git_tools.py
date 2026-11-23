@@ -445,7 +445,10 @@ def test_git_stash_pop_retains_stash_when_apply_conflicts(git_ws):
     git_commit_impl(git_ws, "initial", ["file.txt"])
     path.write_text("stashed\n", encoding="utf-8")
     git_stash_impl(git_ws, "push")
-    path.write_text("conflicting local\n", encoding="utf-8")
+    # Create a committed divergent change so the worktree is clean, but
+    # applying the stash genuinely produces a content conflict.
+    path.write_text("conflicting committed change\n", encoding="utf-8")
+    git_commit_impl(git_ws, "conflicting change", ["file.txt"])
     assert "stash@{0}" in git_stash_impl(git_ws, "list")
     with pytest.raises(ValueError, match="stash retained"):
         git_stash_impl(git_ws, "pop")
