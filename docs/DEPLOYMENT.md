@@ -41,6 +41,14 @@ launcher with the windowless Windows Script Host explicitly:
 wscript.exe .\deployment\windows\start-workspace-hidden.vbs
 ```
 
+The Windows control app does not watch files or restart during edits. When the
+changes are ready, press **Reload server** to restart the MCP worker while
+keeping the tunnel active. At startup, the server discovers each
+`server/tools/*_tools.py` module that defines
+`register(mcp, sandbox, log_path=...)`. Reloading interrupts active MCP
+sessions; clients that do not reconnect and refresh their tool list may need
+one reconnect.
+
 Open the VBS launcher from File Explorer or its desktop shortcut. PM2
 application output is available with `pm2 logs mcp-workspace`.
 Keep the external workspace writable only by the

@@ -11,7 +11,7 @@ from mcp.server.mcpserver import MCPServer
 from pydantic import Field
 
 from server.audited_tool import audited
-from server.sandbox import Sandbox, SandboxError
+from server.sandbox import Sandbox
 
 MAX_OUTLINE_FILE_BYTES = 512_000
 MAX_SYMBOLS = 200

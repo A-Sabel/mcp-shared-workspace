@@ -10,28 +10,23 @@ go to stderr.
 
 from __future__ import annotations
 
+from importlib import import_module
+from pathlib import Path
 import sys
 
 from mcp.server.mcpserver import MCPServer
 
 from server.config import ConfigError, Settings, load_settings
 from server.sandbox import Sandbox
-from server.tools import (
-    file_tools,
-    git_tools,
-    context_tools,
-    outline_tools,
-    search_tools,
-    state_tools,
-    write_tools,
-    workspace_tools,
-)
+from server.tools import workspace_tools
 from server.workspaces import WorkspaceRegistry
 
 INSTRUCTIONS = (
     "Shared project workspace. Start new project tasks with get_workspace_context "
-    "using only the sections needed. Use get_file_outline before reading large source "
-    "files; use git_log to inspect recent history. Paths are relative to the active "
+    "using only the sections needed. Use get_project_map for a compact architecture "
+    "overview, get_file_outline before reading large source files, and "
+    "run_project_checks for explicitly allowlisted configured checks. "
+    "Use git_log to inspect recent history. Paths are relative to the active "
     "workspace: discover them with list_files before targeted file operations and "
     "never guess filenames. Each read_file range is one-based, inclusive, and limited "
     "to 200 lines. For larger files, start with lines 1-200 and continue using "
@@ -57,13 +52,17 @@ def build_server(settings: Settings) -> MCPServer:
     )
     registry = WorkspaceRegistry(registry_path, sandbox)
     workspace_tools.register(mcp, registry, settings.log_path)
-    file_tools.register(mcp, sandbox, log_path=settings.log_path)
-    search_tools.register(mcp, sandbox, log_path=settings.log_path)
-    state_tools.register(mcp, sandbox, log_path=settings.log_path)
-    git_tools.register(mcp, sandbox, log_path=settings.log_path)
-    context_tools.register(mcp, sandbox, log_path=settings.log_path)
-    outline_tools.register(mcp, sandbox, log_path=settings.log_path)
-    write_tools.register(mcp, sandbox, log_path=settings.log_path)
+    tools_dir = Path(__file__).with_name("tools")
+    for module_path in sorted(tools_dir.glob("*_tools.py")):
+        if module_path.stem == "workspace_tools":
+            continue
+        module = import_module(f"{__package__}.tools.{module_path.stem}")
+        register = getattr(module, "register", None)
+        if not callable(register):
+            raise TypeError(
+                f"Tool module {module_path.name} must define register(mcp, sandbox, log_path=...)."
+            )
+        register(mcp, sandbox, log_path=settings.log_path)
     return mcp
 
 

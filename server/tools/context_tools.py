@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -75,7 +76,7 @@ def _read_known_files(sandbox: Sandbox, names: tuple[str, ...], per_file_chars: 
 
 def get_workspace_context_impl(
     sandbox: Sandbox,
-    sections: list[str] | tuple[str, ...] = DEFAULT_SECTIONS,
+    sections: Sequence[str] = DEFAULT_SECTIONS,
     max_tokens: int = 2000,
 ) -> str:
     if not 300 <= max_tokens <= MAX_CONTEXT_TOKENS:

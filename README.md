@@ -1,7 +1,7 @@
 # MCP Shared Workspace Server
 
 A sandboxed Python MCP server exposes a persistent shared
-workspace over Streamable HTTP. It provides one authenticated 19-tool toolbox,
+workspace over Streamable HTTP. It provides one authenticated 21-tool toolbox,
 append-only handoff files, audit logging, compact project context, source outlines,
 and Git operations.
 
@@ -17,7 +17,7 @@ The known hard-link and TOCTOU limitations are recorded in [docs/SECURITY.md](do
 
 ## Tools
 
-The MCP server exposes 19 tools to the authenticated workspace profile.
+The MCP server exposes 21 tools to the authenticated workspace profile.
 
 | Tool                 | What it can do                                                  |
 | -------------------- | --------------------------------------------------------------- |
@@ -36,6 +36,8 @@ The MCP server exposes 19 tools to the authenticated workspace profile.
 | `git_log`            | Show recent commits and changed-file summaries.                  |
 | `get_workspace_context` | Return selected project context within a token budget.         |
 | `get_file_outline`   | Extract imports and declarations from source files.              |
+| `get_project_map`    | Map modules, imports, entry points, and root configuration.      |
+| `run_project_checks` | Run allowlisted, configured pytest, Ruff, or mypy checks.         |
 | `delete_workspace`   | Unregister a workspace without deleting its project files.        |
 | `list_workspaces`    | List registered project workspaces and the active one.          |
 | `register_workspace` | Register an existing project directory by name.                 |
@@ -111,7 +113,7 @@ python -m pytest -q
 ```
 
 The authenticated MCP endpoint is `http://127.0.0.1:8000/mcp`. It exposes
-all 19 tools to authenticated clients. The server remains responsible for
+all 21 tools to authenticated clients. The server remains responsible for
 path validation, protected files, write limits, Git safety, soft-delete, and
 audit logging.
 
@@ -133,6 +135,14 @@ tool audit counts and read coverage, plus optional paired token benchmark
 results entered in the local, git-ignored `benchmarks/results.csv`. The
 registry is stored in `logs/workspaces.json`.
 
+Use **Reload server** in the control app after finishing server edits. The
+button restarts the MCP worker on demand, so saving files does not interrupt
+connected clients mid-edit. New `server/tools/*_tools.py` modules with a
+`register(mcp, sandbox, log_path=...)` function are discovered automatically
+at startup, without a manual import or registration edit in `server/main.py`.
+Reloading briefly interrupts MCP sessions; clients that do not reconnect and
+refresh their tool list automatically may need to reconnect once.
+
 For quicker startup, create a Windows shortcut that runs
 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<repo>\deployment\windows\workspace-control.ps1"`
 and pin it to your desktop or taskbar.
@@ -151,7 +161,7 @@ pm2 restart mcp-workspace
 
 Connect an MCP client or Inspector to `https://<PUBLIC_HOSTNAME>/mcp`. OAuth
 clients can sign in with the workspace access key; legacy clients can use
-`Authorization: Bearer MCP_TOKEN`. An authenticated session exposes all 19
+`Authorization: Bearer MCP_TOKEN`. An authenticated session exposes all 21
 tools. Keep `.env`, tokens, logs, and the external workspace out of commits.
 
 ## Run And Test

@@ -28,15 +28,17 @@ function Set-WorkspacePageLayout {
 
     if ($layoutCompact) {
         $workspaceTab.AutoScroll = $true
-        $layoutCompactButtonWidth = [Math]::Max(72, [int](($layoutContentWidth - 44) / 3))
+        $layoutCompactButtonWidth = [Math]::Max(64, [int](($layoutContentWidth - 52) / 4))
         $serverCard.Location = New-Object System.Drawing.Point($layoutInset, $layoutTop)
         $serverCard.Size = New-Object System.Drawing.Size($layoutContentWidth, 126)
         $serverCard.Anchor = 'Top,Left,Right'
         $script:startButton.Location = New-Object System.Drawing.Point(14, 58)
         $script:startButton.Size = New-Object System.Drawing.Size($layoutCompactButtonWidth, 34)
-        $script:pauseButton.Location = New-Object System.Drawing.Point((24 + $layoutCompactButtonWidth), 58)
+        $script:pauseButton.Location = New-Object System.Drawing.Point((22 + $layoutCompactButtonWidth), 58)
         $script:pauseButton.Size = New-Object System.Drawing.Size($layoutCompactButtonWidth, 34)
-        $exitButton.Location = New-Object System.Drawing.Point((34 + (2 * $layoutCompactButtonWidth)), 58)
+        $script:reloadButton.Location = New-Object System.Drawing.Point((30 + (2 * $layoutCompactButtonWidth)), 58)
+        $script:reloadButton.Size = New-Object System.Drawing.Size($layoutCompactButtonWidth, 34)
+        $exitButton.Location = New-Object System.Drawing.Point((38 + (3 * $layoutCompactButtonWidth)), 58)
         $exitButton.Size = New-Object System.Drawing.Size($layoutCompactButtonWidth, 34)
 
         $workspaceCard.Location = New-Object System.Drawing.Point($layoutInset, ($layoutTop + 144))
@@ -59,12 +61,15 @@ function Set-WorkspacePageLayout {
         $activityCard.Location = New-Object System.Drawing.Point(($layoutInset + $layoutLeftWidth + $layoutGap), ($layoutTop + 144))
         $activityCard.Size = New-Object System.Drawing.Size($layoutRightWidth, [Math]::Max(260, $layoutCardHeight - 144))
         $activityCard.Anchor = 'Top,Left,Right'
+        $layoutStandardButtonWidth = [Math]::Min(132, [Math]::Max(96, [int](($layoutRightWidth - 60) / 4)))
         $script:startButton.Location = New-Object System.Drawing.Point(14, 58)
-        $script:startButton.Size = New-Object System.Drawing.Size(132, 34)
-        $script:pauseButton.Location = New-Object System.Drawing.Point(154, 58)
-        $script:pauseButton.Size = New-Object System.Drawing.Size(132, 34)
-        $exitButton.Location = New-Object System.Drawing.Point(294, 58)
-        $exitButton.Size = New-Object System.Drawing.Size(132, 34)
+        $script:startButton.Size = New-Object System.Drawing.Size($layoutStandardButtonWidth, 34)
+        $script:pauseButton.Location = New-Object System.Drawing.Point((22 + $layoutStandardButtonWidth), 58)
+        $script:pauseButton.Size = New-Object System.Drawing.Size($layoutStandardButtonWidth, 34)
+        $script:reloadButton.Location = New-Object System.Drawing.Point((30 + (2 * $layoutStandardButtonWidth)), 58)
+        $script:reloadButton.Size = New-Object System.Drawing.Size($layoutStandardButtonWidth, 34)
+        $exitButton.Location = New-Object System.Drawing.Point((38 + (3 * $layoutStandardButtonWidth)), 58)
+        $exitButton.Size = New-Object System.Drawing.Size($layoutStandardButtonWidth, 34)
         $workspaceTab.AutoScrollMinSize = New-Object System.Drawing.Size(0, 0)
     }
     $script:activity.Location = New-Object System.Drawing.Point(10, 24)

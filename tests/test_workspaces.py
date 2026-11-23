@@ -37,8 +37,16 @@ def test_delete_protects_default_workspace(tmp_path):
 
 
 def test_delete_protects_currently_active_workspace_alias(tmp_path):
-    registry, active, _other = make_registry(tmp_path)
-    registry.register("Active Alias", str(active))
+    active = tmp_path / "active"
+    other = tmp_path / "other"
+    active.mkdir()
+    other.mkdir()
+    registry_path = tmp_path / "workspaces.json"
+    registry_path.write_text(
+        json.dumps({"default": str(other), "Active Alias": str(active)}),
+        encoding="utf-8",
+    )
+    registry = WorkspaceRegistry(registry_path, Sandbox(active))
 
     with pytest.raises(ValueError, match="default or currently active"):
         registry.delete("Active Alias")

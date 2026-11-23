@@ -253,6 +253,12 @@ def test_authenticated_client_sees_all_tools(tmp_path: Path):
             "list_workspaces",
             "register_workspace",
             "switch_workspace",
+            "delete_workspace",
+            "git_log",
+            "get_workspace_context",
+            "get_file_outline",
+            "get_project_map",
+            "run_project_checks",
         }
 
         assert names == expected_tools

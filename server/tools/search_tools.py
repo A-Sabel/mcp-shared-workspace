@@ -204,7 +204,7 @@ def register(
             ),
         ] = ".",
         glob: Annotated[
-            str,
+            str | None,
             Field(
                 max_length=200,
                 description=(

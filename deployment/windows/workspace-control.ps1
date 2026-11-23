@@ -450,7 +450,63 @@ function Set-Status([bool]$IsRunning, [string]$Text) {
     $script:status.ForeColor = if ($IsRunning) { [System.Drawing.Color]::FromArgb(100, 210, 135) } else { [System.Drawing.Color]::FromArgb(235, 185, 85) }
     $script:startButton.Enabled = -not $IsRunning
     $script:pauseButton.Enabled = $IsRunning
+    $script:reloadButton.Enabled = $IsRunning
     $script:switchButton.Enabled = $true
+}
+
+function Start-ManagedServerProcess {
+    $serverStart = New-Object Diagnostics.ProcessStartInfo
+    $serverStart.FileName = $script:pythonExe
+    $serverStart.Arguments = '-u -m server.http_runner'
+    $serverStart.WorkingDirectory = $script:repo
+    $serverStart.UseShellExecute = $false
+    $serverStart.CreateNoWindow = $true
+    $serverStart.RedirectStandardOutput = $true
+    $serverStart.RedirectStandardError = $true
+    $serverStart.EnvironmentVariables['WORKSPACE_ROOT'] = $script:selectedWorkspacePath
+    $script:serverProcess = [Diagnostics.Process]::new()
+    $script:serverProcess.StartInfo = $serverStart
+    [void]$script:serverProcess.Start()
+    Start-LogPump $script:serverProcess.StandardOutput.BaseStream $script:serverLog
+    Start-LogPump $script:serverProcess.StandardError.BaseStream $script:serverErrLog
+}
+
+function Restart-WorkspaceServer {
+    if (-not $script:running -or $script:starting -or -not $script:serverProcess) { return }
+    $script:starting = $true
+    $script:reloadButton.Enabled = $false
+    $script:pauseButton.Enabled = $false
+    $script:status.Text = 'Reloading MCP server...'
+    [System.Windows.Forms.Application]::DoEvents()
+    try {
+        Add-Activity 'Reloading MCP server to load saved server and tool changes.'
+        Stop-ManagedServer
+        if (-not (Wait-ForPortFree)) {
+            throw 'Port 8000 is still in use. Close the process using that port, then reload again.'
+        }
+        if ($script:closeRequested) { return }
+
+        Start-ManagedServerProcess
+        if (-not (Wait-ForServer)) {
+            if ($script:serverProcess -and $script:serverProcess.HasExited) {
+                throw "MCP server exited during reload (code $($script:serverProcess.ExitCode)). See logs\mcp-server-err.log."
+            }
+            throw 'MCP server did not resume listening on port 8000. See logs\mcp-server-err.log.'
+        }
+        Add-Activity 'MCP server reloaded. The tunnel remains active; reconnect the MCP client if it does not refresh its tools.'
+        Set-Status $true $(if ($script:tunnelOnline) { 'Online' } else { 'Waiting for ngrok...' })
+    } catch {
+        Add-Activity "RELOAD ERROR: $($_.Exception.Message)"
+        Stop-NgrokProcess
+        Stop-ManagedServer
+        if ($script:hostname) { Stop-PreviousTunnel }
+        $script:statusTimer.Stop()
+        $script:tunnelOnline = $false
+        Set-Status $false 'Stopped (reload failed)'
+    } finally {
+        $script:starting = $false
+        if ($script:closeRequested -and -not $script:closing) { $form.Close() }
+    }
 }
 
 function Start-Workspace {
@@ -458,6 +514,7 @@ function Start-Workspace {
     $script:starting = $true
     $script:startButton.Enabled = $false
     $script:pauseButton.Enabled = $false
+    $script:reloadButton.Enabled = $false
     $script:status.Text = 'Starting...'
     [System.Windows.Forms.Application]::DoEvents()
     try {
@@ -474,20 +531,7 @@ function Start-Workspace {
         Clear-LogFile $script:serverLog
         Clear-LogFile $script:serverErrLog
         Add-Activity "Starting the MCP server for workspace '$([string]$script:workspaceCombo.SelectedItem)'."
-        $serverStart = New-Object Diagnostics.ProcessStartInfo
-        $serverStart.FileName = $script:pythonExe
-        $serverStart.Arguments = '-u -m server.http_runner'
-        $serverStart.WorkingDirectory = $script:repo
-        $serverStart.UseShellExecute = $false
-        $serverStart.CreateNoWindow = $true
-        $serverStart.RedirectStandardOutput = $true
-        $serverStart.RedirectStandardError = $true
-        $serverStart.EnvironmentVariables['WORKSPACE_ROOT'] = $script:selectedWorkspacePath
-        $script:serverProcess = [Diagnostics.Process]::new()
-        $script:serverProcess.StartInfo = $serverStart
-        [void]$script:serverProcess.Start()
-        Start-LogPump $script:serverProcess.StandardOutput.BaseStream $script:serverLog
-        Start-LogPump $script:serverProcess.StandardError.BaseStream $script:serverErrLog
+        Start-ManagedServerProcess
 
         $listening = Wait-ForServer
         if ($script:closeRequested) {
@@ -502,6 +546,7 @@ function Start-Workspace {
             throw 'MCP server did not start listening on port 8000. See logs\mcp-server-err.log.'
         }
         Add-Activity 'MCP server is listening on port 8000.'
+        Add-Activity 'Server reload is manual; use Reload server after saving changes. New *_tools.py modules are auto-registered.'
 
         Clear-LogFile $script:ngrokLog
         Set-LogCursor $script:ngrokLog

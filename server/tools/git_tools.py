@@ -327,7 +327,7 @@ def register(
     )
     def git_diff(
         path: Annotated[
-            str,
+            str | None,
             Field(
                 description=(
                     "Optional workspace-relative file or directory to "

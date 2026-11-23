@@ -358,7 +358,7 @@ def register(
                 ),
             ] = ".",
             glob: Annotated[
-                str,
+                str | None,
                 Field(
                     max_length=200,
                     description=(
@@ -416,7 +416,7 @@ def register(
         )
         def read_file(
             path: Annotated[
-                str,
+                str | None,
                 Field(
                     description=(
                         "Path relative to the active workspace. Discover valid "
@@ -435,7 +435,7 @@ def register(
                 ),
             ] = 1,
             end_line: Annotated[
-                int,
+                int | None,
                 Field(
                     ge=1,
                     description=(
@@ -445,7 +445,7 @@ def register(
                 ),
             ] = None,
             ranges: Annotated[
-                list[ReadRange],
+                list[ReadRange] | None,
                 Field(
                     min_length=1,
                     max_length=MAX_READ_RANGES,
