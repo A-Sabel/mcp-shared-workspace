@@ -104,6 +104,19 @@ def write_file_impl(
     )
 
 
+def _not_found_message(path: str, text: str, old: str) -> str:
+    """Build a diagnostic message for a str_replace miss."""
+    message = f"Text to replace was not found in {path}."
+    stripped = old.strip()
+    if stripped and stripped in text:
+        return message + " A match exists if leading/trailing whitespace is ignored."
+    first = next((ln for ln in old.splitlines() if ln.strip()), "")
+    if first and first in text:
+        line_no = text[: text.index(first)].count("\n") + 1
+        return message + f" The first line matches at line {line_no}; later lines differ."
+    return message + " Re-read the file and copy old exactly, including indentation."
+
+
 def str_replace_impl(
     sandbox: Sandbox,
     path: str,
@@ -132,35 +145,42 @@ def str_replace_impl(
     with _FILE_WRITE_LOCK:
         _check_expected_hash(target, expected_hash, path)
         try:
-            text = target.read_text(encoding="utf-8")
+            with target.open("r", encoding="utf-8", newline="") as stream:
+                raw = stream.read()
         except UnicodeDecodeError as exc:
             raise ValueError(f"File is not valid UTF-8 text: {path}") from exc
 
-    occurrences = text.count(old)
+        crlf = raw.count("\r\n")
+        eol = "\r\n" if crlf > raw.count("\n") - crlf else "\n"
+        text = raw.replace("\r\n", "\n")
+        old = old.replace("\r\n", "\n")
+        new = new.replace("\r\n", "\n")
 
-    if occurrences == 0:
-        raise ValueError(f"Text to replace was not found in {path}.")
+        occurrences = text.count(old)
 
-    if not replace_all and occurrences > 1:
-        raise ValueError(
-            f"Found {occurrences} occurrences in {path}. "
-            "Set replace_all=true or provide a more specific match."
+        if occurrences == 0:
+            raise ValueError(_not_found_message(path, text, old))
+
+        if not replace_all and occurrences > 1:
+            raise ValueError(
+                f"Found {occurrences} occurrences in {path}. "
+                "Set replace_all=true or provide a more specific match."
+            )
+
+        replacements = occurrences if replace_all else 1
+        updated = text.replace(
+            old,
+            new,
+            -1 if replace_all else 1,
         )
+        if eol == "\r\n":
+            updated = updated.replace("\n", "\r\n")
 
-    replacements = occurrences if replace_all else 1
-    updated = text.replace(
-        old,
-        new,
-        -1 if replace_all else 1,
-    )
+        if len(updated.encode("utf-8")) > MAX_WRITE_BYTES:
+            raise ValueError(f"Updated file exceeds the {MAX_WRITE_BYTES:,}-byte limit.")
 
-    if len(updated.encode("utf-8")) > MAX_WRITE_BYTES:
-        raise ValueError(f"Updated file exceeds the {MAX_WRITE_BYTES:,}-byte limit.")
-
-    with _FILE_WRITE_LOCK:
-        if expected_hash is not None:
-            _check_expected_hash(target, expected_hash, path)
-        target.write_text(updated, encoding="utf-8")
+        with target.open("w", encoding="utf-8", newline="") as stream:
+            stream.write(updated)
 
     return f"Replaced {replacements} occurrence(s) in " f"{sandbox.relative(target)}."
 

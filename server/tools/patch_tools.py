@@ -105,15 +105,10 @@ def _parse_patch(patch: str) -> list[tuple[str, list[tuple[str, list[str], list[
                 if line[0] in " +":
                     new_lines.append(line[1:])
                 i += 1
-            old_count = int(match.group(2) or "1")
-            new_count = int(match.group(4) or "1")
-            if len(old_lines) != old_count or len(new_lines) != new_count:
-                raise ValueError(
-                    f"Hunk {hunk_number} (header at patch line {hunk_header_line}) "
-                    f"line counts do not match: header declares {old_count} old/"
-                    f"{new_count} new lines, found {len(old_lines)} old/"
-                    f"{len(new_lines)} new lines."
-                )
+            # Trust the hunk body over the @@ header counts: generated patches often
+            # miscount, and every old line is still verified against the file.
+            if not old_lines and not new_lines:
+                raise ValueError(f"Hunk {hunk_number} (header at patch line {hunk_header_line}) has no lines.")
             hunks.append((match.group(1), old_lines, new_lines))
         if not hunks:
             raise ValueError(f"No hunks found for {old_path!r}.")
@@ -127,8 +122,35 @@ def _parse_patch(patch: str) -> list[tuple[str, list[tuple[str, list[str], list[
     return files
 
 
+def _context_mismatch_message(path: str, line_number: str, expected: list[str], source: list[str]) -> str:
+    """Explain a context mismatch with the expected vs actual line, or a better hunk start."""
+    stripped = [ln.rstrip("\r\n") for ln in source]
+    size = len(expected)
+    for index in range(len(stripped) - size + 1):
+        if stripped[index:index + size] == expected:
+            return (
+                f"Exact context mismatch in {path!r}: the hunk header says line {line_number} "
+                f"but this context matches at line {index + 1}. Fix the @@ start line; "
+                "no files were changed."
+            )
+    start = max(0, int(line_number) - 1)
+    for offset, want in enumerate(expected):
+        index = start + offset
+        got = stripped[index] if index < len(stripped) else None
+        if got != want:
+            found = "<end of file>" if got is None else repr(got[:120])
+            return (
+                f"Exact context mismatch in {path!r} at line {index + 1}: "
+                f"patch expects {want[:120]!r} but the file has {found}. "
+                "Check whitespace and re-read the file; no files were changed."
+            )
+    return f"Exact context mismatch in {path!r} near line {line_number}; no files were changed."
+
+
 def _apply_hunks(original: str, hunks: list[tuple[str, list[str], list[str]]], path: str) -> str:
     source = original.splitlines(keepends=True)
+    crlf = original.count("\r\n")
+    eol = "\r\n" if crlf > original.count("\n") - crlf else "\n"
     output: list[str] = []
     cursor = 0
     for line_number, old_lines, new_lines in hunks:
@@ -138,8 +160,8 @@ def _apply_hunks(original: str, hunks: list[tuple[str, list[str], list[str]]], p
         output.extend(source[cursor:start])
         actual = [line.rstrip("\r\n") for line in source[start:start + len(old_lines)]]
         if actual != old_lines:
-            raise ValueError(f"Exact context mismatch in {path!r} near line {line_number}; no files were changed.")
-        output.extend(line + "\n" for line in new_lines)
+            raise ValueError(_context_mismatch_message(path, line_number, old_lines, source))
+        output.extend(line + eol for line in new_lines)
         cursor = start + len(old_lines)
     output.extend(source[cursor:])
     return "".join(output)
