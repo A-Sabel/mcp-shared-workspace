@@ -43,6 +43,8 @@ INSTRUCTIONS = (
     "need more context, request next_start_line; batch up to five known-needed "
     "chunks with read_file ranges when useful. For complete-file requests, "
     "continue until has_more is false. Report any file or range you could not finish."
+    " Before str_replace, copy the old text exactly from read_file output; if an edit fails, re-read the file before retrying instead of resending the same text. "
+    "apply_patch takes standard unified diff only (--- a/path, +++ b/path, @@ -a,b +c,d @@), not the *** Begin Patch format."
 )
 
 

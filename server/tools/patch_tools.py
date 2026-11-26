@@ -154,7 +154,9 @@ def _apply_hunks(original: str, hunks: list[tuple[str, list[str], list[str]]], p
     output: list[str] = []
     cursor = 0
     for line_number, old_lines, new_lines in hunks:
-        start = max(0, int(line_number) - 1)
+        # A hunk with no old lines (zero-context insertion, "@@ -5,0 +6,2 @@")
+        # inserts AFTER line 5; otherwise the start line is the first old line.
+        start = int(line_number) if not old_lines else max(0, int(line_number) - 1)
         if start < cursor or start > len(source):
             raise ValueError(f"Overlapping or out-of-range hunk for {path!r}.")
         output.extend(source[cursor:start])
