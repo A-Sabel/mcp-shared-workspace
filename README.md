@@ -5,6 +5,28 @@ workspace over Streamable HTTP. It provides one authenticated toolbox,
 shared state management, audit logging, compact project context, source outlines,
 and Git operations.
 
+## Use it as a coding agent from any MCP client
+
+No Claude Code or Codex subscription? Connect this server to an MCP-capable
+assistant and it can browse, search, edit, patch, test and commit in your project.
+Tested with Codex. Claude also supports remote custom connectors, including one on
+the free plan.
+
+1. Start the server and tunnel (see Setup) and note your public `https://<host>/mcp` URL.
+2. Connect your client and authenticate with OAuth or your `MCP_TOKEN` as a Bearer token:
+   - **Claude:** Connectors → Add custom connector → paste the URL.
+   - **Codex:** add it as a remote HTTP server in your Codex MCP config.
+3. Start a chat or session and ask: "Read AGENTS.md, then `<task>`".
+
+Limits: free chat plans have message limits, and Claude's free plan allows one
+custom connector. Your PC and the tunnel must be running. It works on projects
+stored on the machine running the server; there are no push, pull or clone tools.
+There is no arbitrary shell access: only allowlisted pytest/ruff/mypy checks run.
+It works while the session is open; it is not a background agent.
+
+Security: this exposes your project over a public URL. Keep `MCP_TOKEN` secret and
+rotate it if it leaks.
+
 ## Capabilities
 
 The configured `MCP_TOKEN` is the workspace owner credential. OAuth sign-in

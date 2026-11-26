@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated
 
@@ -11,7 +12,8 @@ from mcp.server.mcpserver import MCPServer
 from pydantic import Field
 
 from server.audited_tool import audited
-from server.sandbox import Sandbox
+from server.sandbox import Sandbox, SandboxError
+from server.tools.file_tools import _missing_path_message
 from server.tools.project_map_tools import _walk_sources
 
 MAX_FILES = 300
@@ -29,20 +31,58 @@ _DECLARATIONS = (
 )
 
 
-def _source_files(sandbox: Sandbox, path: str, max_files: int) -> tuple[list[Path], bool]:
+def _validate(symbol: str, max_files: int, max_results: int) -> None:
+    if not isinstance(symbol, str) or not _IDENTIFIER.fullmatch(symbol):
+        shown = str(symbol)
+        if len(shown) > 60:
+            shown = shown[:57] + "..."
+        raise ValueError(
+            "symbol must be a simple identifier (letters, digits, '_' or '$', "
+            f"not starting with a digit); got {shown!r}. For phrases, dotted "
+            "names such as 'a.b', or other text, use search_files instead."
+        )
+    if not 1 <= max_files <= MAX_FILES or not 1 <= max_results <= MAX_RESULTS:
+        raise ValueError(f"max_files must be 1..{MAX_FILES} and max_results 1..{MAX_RESULTS}.")
+
+
+def _source_files(
+    sandbox: Sandbox, path: str, max_files: int
+) -> tuple[list[Path], bool, Callable[[Path], str]]:
+    """Return (files, truncated, label) for a directory or a single file.
+
+    ``label`` renders a file path for output: relative to the searched
+    directory, or workspace-relative when one file was named directly.
+    """
     root = sandbox.resolve(path)
+    if not root.exists():
+        raise SandboxError(_missing_path_message(sandbox, path))
+    if root.is_file():
+        if sandbox.is_protected(root):
+            raise SandboxError(f"Path {path!r} is protected and cannot be searched.")
+        return [root], False, sandbox.relative
     if not root.is_dir():
-        raise ValueError(f"Path {path!r} is not a directory.")
-    return _walk_sources(sandbox, root, max_files)
+        raise SandboxError(f"Path {path!r} is not a file or directory.")
+    files, truncated = _walk_sources(sandbox, root, max_files)
+    return files, truncated, lambda file: file.relative_to(root).as_posix()
 
 
-def _read(path: Path) -> str:
-    if path.stat().st_size > MAX_SOURCE_BYTES:
-        return ""
+def _scan_status(scanned: int, skipped: int, truncated: bool) -> str:
+    status = f"FILES SCANNED: {scanned}"
+    if truncated:
+        status += " (partial: file limit reached)"
+    if skipped:
+        status += f"; {skipped} skipped (over 1 MB or not valid UTF-8)"
+    return status
+
+
+def _read(path: Path) -> str | None:
+    """Return file text, or None when the file is too large or unreadable."""
     try:
+        if path.stat().st_size > MAX_SOURCE_BYTES:
+            return None
         return path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
-        return ""
+        return None
 
 
 def _definitions(source: str, suffix: str, name: str) -> list[tuple[int, str]]:
@@ -71,20 +111,19 @@ def _definitions(source: str, suffix: str, name: str) -> list[tuple[int, str]]:
 
 
 def find_symbol_impl(sandbox: Sandbox, symbol: str, path: str = ".", max_files: int = 150, max_results: int = 30) -> str:
-    if not _IDENTIFIER.fullmatch(symbol):
-        raise ValueError("symbol must be a simple identifier.")
-    if not 1 <= max_files <= MAX_FILES or not 1 <= max_results <= MAX_RESULTS:
-        raise ValueError(f"max_files must be 1..{MAX_FILES} and max_results 1..{MAX_RESULTS}.")
-    root = sandbox.resolve(path)
-    files, truncated = _source_files(sandbox, path, max_files)
+    _validate(symbol, max_files, max_results)
+    files, truncated, label = _source_files(sandbox, path, max_files)
     matches = []
+    scanned = skipped = 0
     for file in files:
         source = _read(file)
-        if not source:
+        if source is None:
+            skipped += 1
             continue
+        scanned += 1
         for line, kind in _definitions(source, file.suffix.lower(), symbol):
-            matches.append(f"{file.relative_to(root).as_posix()}:{line}: {kind} {symbol}")
-    output = [f"SYMBOL DEFINITIONS: {symbol}", f"FILES SCANNED: {len(files)}" + (" (partial: file limit reached)" if truncated else "")]
+            matches.append(f"{label(file)}:{line}: {kind} {symbol}")
+    output = [f"SYMBOL DEFINITIONS: {symbol}", _scan_status(scanned, skipped, truncated)]
     output.extend(matches[:max_results] or ["(no definitions detected)"])
     if len(matches) > max_results:
         output.append(f"[{len(matches) - max_results} additional matches omitted]")
@@ -93,22 +132,21 @@ def find_symbol_impl(sandbox: Sandbox, symbol: str, path: str = ".", max_files: 
 
 
 def find_references_impl(sandbox: Sandbox, symbol: str, path: str = ".", max_files: int = 150, max_results: int = 50) -> str:
-    if not _IDENTIFIER.fullmatch(symbol):
-        raise ValueError("symbol must be a simple identifier.")
-    if not 1 <= max_files <= MAX_FILES or not 1 <= max_results <= MAX_RESULTS:
-        raise ValueError(f"max_files must be 1..{MAX_FILES} and max_results 1..{MAX_RESULTS}.")
-    root = sandbox.resolve(path)
-    files, truncated = _source_files(sandbox, path, max_files)
+    _validate(symbol, max_files, max_results)
+    files, truncated, label = _source_files(sandbox, path, max_files)
     pattern = re.compile(rf"(?<![\w$]){re.escape(symbol)}(?![\w$])")
     matches = []
+    scanned = skipped = 0
     for file in files:
         source = _read(file)
-        if not source:
+        if source is None:
+            skipped += 1
             continue
+        scanned += 1
         for number, line in enumerate(source.splitlines(), 1):
             if pattern.search(line):
-                matches.append(f"{file.relative_to(root).as_posix()}:{number}: {line.strip()[:180]}")
-    output = [f"SYMBOL REFERENCES: {symbol}", f"FILES SCANNED: {len(files)}" + (" (partial: file limit reached)" if truncated else "")]
+                matches.append(f"{label(file)}:{number}: {line.strip()[:180]}")
+    output = [f"SYMBOL REFERENCES: {symbol}", _scan_status(scanned, skipped, truncated)]
     output.extend(matches[:max_results] or ["(no references detected)"])
     if len(matches) > max_results:
         output.append(f"[{len(matches) - max_results} additional matches omitted]")

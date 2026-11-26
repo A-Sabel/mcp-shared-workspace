@@ -49,11 +49,16 @@ def test_patch_parser_reports_invalid_hunk_line_content(tmp_path):
         apply_patch_impl(Sandbox(tmp_path), patch)
 
 
-def test_patch_parser_reports_hunk_number_and_counts(tmp_path):
+def test_patch_trusts_hunk_body_over_header_counts(tmp_path):
+    # Header claims 2 old/2 new lines but the body has 1/1. The parser
+    # deliberately trusts the body (see the comment in _parse_patch), and the
+    # old line is still verified against the file.
+    (tmp_path / "a.txt").write_text("old\n", encoding="utf-8")
     patch = "--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n-old\n+new\n"
 
-    with pytest.raises(ValueError, match=r"Hunk 1 .*declares 2 old/2 new lines, found 1 old/1 new"):
-        apply_patch_impl(Sandbox(tmp_path), patch)
+    apply_patch_impl(Sandbox(tmp_path), patch)
+
+    assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "new\n"
 
 
 def test_context_mismatch_changes_nothing(tmp_path):

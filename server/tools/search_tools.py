@@ -14,9 +14,21 @@ from server.audited_tool import audited
 from server.config import SEARCH_LIMIT, SNIPPET_CHARS
 from server.sandbox import Sandbox, SandboxError
 from server.tools.schema_utils import set_property_type
-from server.tools.file_tools import _glob_match, _ignored_paths, _walk
+from server.tools.file_tools import (
+    SCAN_CAP,
+    _glob_match,
+    _ignored_paths,
+    _missing_path_message,
+    _walk,
+)
 
 MAX_SEARCH_FILE_BYTES = 5_000_000
+MAX_MATCHES_PER_FILE = 5
+MAX_CAPPED_FILE_NOTES = 5
+SCAN_LIMIT_NOTE = (
+    f"[scan limit reached: only the first {SCAN_CAP} entries were scanned, "
+    "so results may be incomplete; narrow with path= or glob=]"
+)
 
 
 def search_files_impl(
@@ -26,24 +38,33 @@ def search_files_impl(
     glob: str | None = None,
     regex: bool = False,
     limit: int = SEARCH_LIMIT,
+    per_file_limit: int = MAX_MATCHES_PER_FILE,
 ) -> str:
-    """Search workspace text files and return compact matching lines."""
+    """Search workspace text files and return compact matching lines.
+
+    At most ``per_file_limit`` matches are shown per file so one noisy file
+    (a lockfile, a minified bundle) cannot use up the whole result budget.
+    Searching a single file by path is not subject to that cap.
+    """
     if not isinstance(query, str) or not query.strip():
         raise ValueError("query must not be empty.")
 
     if limit < 1 or limit > SEARCH_LIMIT:
         raise ValueError(f"limit must be between 1 and {SEARCH_LIMIT}.")
 
+    if per_file_limit < 1:
+        raise ValueError("per_file_limit must be at least 1.")
+
     base = sandbox.resolve(path)
+    scan_capped = False
 
     if not base.exists():
-        raise SandboxError(
-            f"Path {path!r} does not exist. "
-            "Call list_files with path='.' to see what exists."
-        )
+        raise SandboxError(_missing_path_message(sandbox, path))
 
     if base.is_file():
         candidates = [base]
+        # The caller named this file explicitly, so show all of its matches.
+        per_file_limit = limit
 
     elif base.is_dir():
         found: list[tuple[Path, bool]] = []
@@ -56,20 +77,21 @@ def search_files_impl(
             output=found,
         )
 
+        # _walk stops exactly at SCAN_CAP, so hitting it means entries were dropped.
+        scan_capped = len(found) >= SCAN_CAP
         candidates = [item_path for item_path, is_dir in found if not is_dir]
 
     else:
         raise SandboxError(f"Path {path!r} is not a file or directory.")
 
-    ignored = _ignored_paths(sandbox, candidates)
-    candidates = [
-        candidate for candidate in candidates
-        if sandbox.relative(candidate) not in ignored
-        and not any(
-            sandbox.relative(candidate).startswith(prefix + "/")
-            for prefix in ignored
-        )
-    ]
+    # Directory walks already exclude Git-ignored entries; only an explicitly
+    # named file still needs the check.
+    if base.is_file():
+        ignored = _ignored_paths(sandbox, candidates)
+        candidates = [
+            candidate for candidate in candidates
+            if sandbox.relative(candidate) not in ignored
+        ]
 
     if glob:
         candidates = [
@@ -81,7 +103,10 @@ def search_files_impl(
             )
         ]
         if not candidates:
-            return f"No files matched glob {glob!r} under {path!r}."
+            message = f"No files matched glob {glob!r} under {path!r}."
+            if scan_capped:
+                message += f"\n{SCAN_LIMIT_NOTE}"
+            return message
 
     candidates.sort(key=lambda candidate: (sandbox.relative(candidate).casefold(), sandbox.relative(candidate)))
 
@@ -96,6 +121,7 @@ def search_files_impl(
             raise ValueError(f"Invalid regular expression: {exc}") from None
 
     results: list[str] = []
+    capped_files: list[tuple[str, int]] = []
 
     for candidate in candidates:
         if len(results) >= limit:
@@ -103,6 +129,9 @@ def search_files_impl(
 
         if sandbox.is_protected(candidate):
             continue
+
+        file_hits = 0
+        hidden_hits = 0
 
         try:
             if candidate.stat().st_size > MAX_SEARCH_FILE_BYTES:
@@ -128,6 +157,13 @@ def search_files_impl(
                     if not matched:
                         continue
 
+                    file_hits += 1
+
+                    if file_hits > per_file_limit:
+                        # Keep counting so the note can say how many were hidden.
+                        hidden_hits += 1
+                        continue
+
                     snippet = text.strip()
 
                     if len(snippet) > SNIPPET_CHARS:
@@ -148,17 +184,39 @@ def search_files_impl(
             # Skip files that disappear or become unreadable.
             continue
 
+        finally:
+            if hidden_hits:
+                capped_files.append((sandbox.relative(candidate), hidden_hits))
+
     if not results:
         if glob_candidate_count is not None:
-            return (
+            message = (
                 f"No content matches for query in the {glob_candidate_count} "
                 f"file(s) matched by glob {glob!r}."
             )
-        return "No matches."
+        else:
+            message = "No matches."
+        if scan_capped:
+            message += f"\n{SCAN_LIMIT_NOTE}"
+        return message
 
     output = [f"Found {len(results)} " f"match{'es' if len(results) != 1 else ''}:"]
 
     output.extend(results)
+
+    for capped_path, hidden in capped_files[:MAX_CAPPED_FILE_NOTES]:
+        output.append(
+            f"[{capped_path}: +{hidden} more match{'es' if hidden != 1 else ''} "
+            f"not shown (per-file limit {per_file_limit}); "
+            "search that file with path= to see all]"
+        )
+
+    if len(capped_files) > MAX_CAPPED_FILE_NOTES:
+        extra_files = len(capped_files) - MAX_CAPPED_FILE_NOTES
+        output.append(
+            f"[{extra_files} more file{'s' if extra_files != 1 else ''} "
+            "also hit the per-file limit]"
+        )
 
     if len(results) >= limit:
         output.append(
@@ -166,6 +224,9 @@ def search_files_impl(
             "narrow with path= or glob=, "
             "or increase specificity]"
         )
+
+    if scan_capped:
+        output.append(SCAN_LIMIT_NOTE)
 
     return "\n".join(output)
 

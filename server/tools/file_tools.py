@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-import fnmatch
+import difflib
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 from collections.abc import Sequence
+from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
 
@@ -103,22 +105,80 @@ def _line_info(path: Path, size: int) -> str:
     return f"{count} line" + ("" if count == 1 else "s")
 
 
+@lru_cache(maxsize=256)
+def _compile_glob(pattern: str) -> re.Pattern[str]:
+    """Translate a glob into a path-aware regex.
+
+    ``*`` and ``?`` never cross a ``/``. A ``**`` that forms a whole path
+    segment matches across directories: ``**/`` means zero or more leading
+    directories, and a trailing ``**`` means everything below. Anywhere else
+    ``**`` behaves like ``*``.
+    """
+    out: list[str] = []
+    i, n = 0, len(pattern)
+
+    while i < n:
+        char = pattern[i]
+
+        if char == "*":
+            end = i
+            while end < n and pattern[end] == "*":
+                end += 1
+            whole_segment_start = i == 0 or pattern[i - 1] == "/"
+
+            if end - i >= 2 and whole_segment_start and end < n and pattern[end] == "/":
+                out.append("(?:.*/)?")
+                i = end + 1
+            elif end - i >= 2 and whole_segment_start and end == n:
+                out.append(".*")
+                i = end
+            else:
+                out.append("[^/]*")
+                i = end
+
+        elif char == "?":
+            out.append("[^/]")
+            i += 1
+
+        elif char == "[":
+            j = i + 1
+            if j < n and pattern[j] in "!^":
+                j += 1
+            if j < n and pattern[j] == "]":
+                j += 1
+            while j < n and pattern[j] != "]":
+                j += 1
+
+            if j >= n:
+                out.append(re.escape(char))
+                i += 1
+            else:
+                body = pattern[i + 1 : j].replace("\\", "\\\\")
+                if body.startswith(("!", "^")):
+                    body = "^" + body[1:]
+                out.append(f"[{body}]")
+                i = j + 1
+
+        else:
+            out.append(re.escape(char))
+            i += 1
+
+    # Match fnmatch's historical behaviour: case-insensitive where the OS is.
+    flags = re.IGNORECASE if os.path.normcase("A") == "a" else 0
+    return re.compile("".join(out), flags)
+
+
 def _glob_match(relative_path: str, pattern: str) -> bool:
-    """Match a filename or workspace-relative path against a glob."""
-    patterns = [pattern]
+    """Match a filename or workspace-relative path against a glob.
 
-    if pattern.startswith("**/"):
-        patterns.append(pattern[3:])
-
-    filename = relative_path.rsplit("/", 1)[-1]
-
-    return any(
-        fnmatch.fnmatch(
-            relative_path if "/" in pat else filename,
-            pat,
-        )
-        for pat in patterns
-    )
+    A pattern without ``/`` is matched against the file name alone, so
+    ``*.py`` finds Python files at any depth. A pattern containing ``/`` is
+    matched against the whole relative path, where ``*`` stays inside one
+    directory (``src/*.py`` does not match ``src/a/b.py``) and ``**`` crosses
+    directories (``src/**/*.py`` does).
+    """
+    target = relative_path if "/" in pattern else relative_path.rsplit("/", 1)[-1]
+    return _compile_glob(pattern).fullmatch(target) is not None
 
 
 def _read_result_summary(result: object) -> dict[str, object]:
@@ -177,6 +237,64 @@ def _ignored_paths(sandbox: Sandbox, paths: Sequence[Path]) -> set[str]:
     return {item for item in result.stdout.split("\0") if item}
 
 
+def _missing_path_message(sandbox: Sandbox, path: str) -> str:
+    """Build a 'does not exist' message with close-name suggestions.
+
+    Finds the first path component that does not exist, then offers the
+    closest sibling names from the deepest directory that does. Falls back
+    to the plain message if anything goes wrong.
+    """
+    plain = (
+        f"Path {path!r} does not exist. "
+        "Call list_files with path='.' to see what exists."
+    )
+    parts = [
+        part
+        for part in path.replace("\\", "/").split("/")
+        if part not in ("", ".")
+    ]
+    if not parts or ".." in parts:
+        return plain
+
+    try:
+        current = "."
+        for part in parts:
+            parent = sandbox.resolve(current)
+            if (parent / part).exists():
+                current = part if current == "." else f"{current}/{part}"
+                continue
+
+            names = sorted(
+                entry.name
+                for entry in os.scandir(parent)
+                if not sandbox.is_protected(Path(entry.path))
+            )
+            by_lower = {name.lower(): name for name in names}
+            close = difflib.get_close_matches(
+                part.lower(), list(by_lower), n=3, cutoff=0.6
+            )
+            matches = [by_lower[name] for name in close]
+            prefix = "" if current == "." else f"{current}/"
+            location = "the workspace root" if current == "." else repr(current)
+
+            if matches:
+                options = ", ".join(repr(prefix + match) for match in matches)
+                return (
+                    f"Path {path!r} does not exist. "
+                    f"Did you mean: {options}? "
+                    "Call list_files with path='.' to see what exists."
+                )
+            return (
+                f"Path {path!r} does not exist "
+                f"({part!r} was not found in {location}). "
+                f"Call list_files with path={current!r} to see what is there."
+            )
+    except (OSError, SandboxError):
+        return plain
+
+    return plain
+
+
 def _walk(
     sandbox: Sandbox,
     directory: Path,
@@ -184,48 +302,66 @@ def _walk(
     max_depth: int,
     output: list[tuple[Path, bool]],
 ) -> None:
-    """Walk shallow-first so root files survive the bounded scan."""
-    pending = [(directory, depth)]
+    """Walk shallow-first so root files survive the bounded scan.
 
-    while pending and len(output) < SCAN_CAP:
-        current, current_depth = pending.pop(0)
-        try:
-            with os.scandir(current) as entries:
-                entries = sorted(
-                    entries,
-                    key=lambda entry: (
-                        entry.is_dir(follow_symlinks=False),
-                        entry.name.lower(),
-                    ),
-                )
-        except OSError:
-            continue
+    Git-ignored entries are dropped one tree level at a time (a single
+    ``git check-ignore`` call per level), so ignored or generated folders such
+    as ``dist/`` or ``build/`` neither use up SCAN_CAP nor get descended into.
+    Outside a Git repo, or without Git, nothing extra is filtered.
+    """
+    level = [(directory, depth)]
 
-        child_directories: list[Path] = []
-        for entry in entries:
+    while level and len(output) < SCAN_CAP:
+        level_entries: list[tuple[Path, bool, int]] = []
+
+        for current, current_depth in level:
+            try:
+                with os.scandir(current) as entries:
+                    entries = sorted(
+                        entries,
+                        key=lambda entry: (
+                            entry.is_dir(follow_symlinks=False),
+                            entry.name.lower(),
+                        ),
+                    )
+            except OSError:
+                continue
+
+            for entry in entries:
+                # Do not follow symlinks during directory enumeration.
+                if entry.is_symlink():
+                    continue
+
+                is_dir = entry.is_dir(follow_symlinks=False)
+                if not is_dir and not entry.is_file(follow_symlinks=False):
+                    continue
+
+                path = Path(entry.path)
+                if sandbox.is_protected(path):
+                    continue
+
+                if is_dir and entry.name.lower() in SKIP_SCAN_DIRS:
+                    continue
+
+                level_entries.append((path, is_dir, current_depth))
+
+        ignored = _ignored_paths(
+            sandbox, [path for path, _, _ in level_entries]
+        )
+        next_level: list[tuple[Path, int]] = []
+
+        for path, is_dir, current_depth in level_entries:
             if len(output) >= SCAN_CAP:
                 break
 
-            # Do not follow symlinks during directory enumeration.
-            if entry.is_symlink():
-                continue
-
-            is_dir = entry.is_dir(follow_symlinks=False)
-            if not is_dir and not entry.is_file(follow_symlinks=False):
-                continue
-
-            path = Path(entry.path)
-            if sandbox.is_protected(path):
-                continue
-
-            if is_dir and entry.name.lower() in SKIP_SCAN_DIRS:
+            if sandbox.relative(path) in ignored:
                 continue
 
             output.append((path, is_dir))
             if is_dir and current_depth < max_depth:
-                child_directories.append(path)
+                next_level.append((path, current_depth + 1))
 
-        pending.extend((path, current_depth + 1) for path in child_directories)
+        level = next_level
 
 
 def list_files_impl(
@@ -240,10 +376,7 @@ def list_files_impl(
     base = sandbox.resolve(path)
 
     if not base.exists():
-        raise SandboxError(
-            f"Path {path!r} does not exist. "
-            "Call list_files with path='.' to see what exists."
-        )
+        raise SandboxError(_missing_path_message(sandbox, path))
 
     if base.is_file():
         if sandbox.relative(base) in _ignored_paths(sandbox, [base]):
@@ -270,16 +403,8 @@ def list_files_impl(
         output=found,
     )
 
-    ignored = _ignored_paths(sandbox, [item_path for item_path, _ in found])
-    found = [
-        (item_path, is_dir)
-        for item_path, is_dir in found
-        if sandbox.relative(item_path) not in ignored
-        and not any(
-            sandbox.relative(item_path).startswith(prefix + "/")
-            for prefix in ignored
-        )
-    ]
+    # _walk already drops Git-ignored entries, so `found` is the true scan result
+    # and hitting SCAN_CAP here means real entries were left unscanned.
     capped = len(found) >= SCAN_CAP
 
     if glob:
