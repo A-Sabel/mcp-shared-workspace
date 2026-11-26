@@ -15,7 +15,7 @@ the free plan.
 1. Start the server and tunnel (see Setup) and note your public `https://<host>/mcp` URL.
 2. Connect your client and authenticate with OAuth or your `MCP_TOKEN` as a Bearer token:
    - **Claude:** Connectors → Add custom connector → paste the URL.
-   - **Codex:** add it as a remote HTTP server in your Codex MCP config.
+   - **Codex:** see [Connecting AI Clients](docs/CONNECTING_CLIENTS.md).
 3. Start a chat or session and ask: "Read AGENTS.md, then `<task>`".
 
 Limits: free chat plans have message limits, and Claude's free plan allows one
@@ -26,6 +26,7 @@ It works while the session is open; it is not a background agent.
 
 Security: this exposes your project over a public URL. Keep `MCP_TOKEN` secret and
 rotate it if it leaks.
+
 
 ## Capabilities
 
